@@ -50,4 +50,4 @@ func main() {
 ```
 
 ## Documentation
-[http://godoc.org/github.com/victorspringer/http-cache](http://godoc.org/github.com/victorspringer/http-cache)
+[https://godoc.org/github.com/victorspringer/http-cache](https://godoc.org/github.com/victorspringer/http-cache)
