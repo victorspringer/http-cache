@@ -36,8 +36,7 @@ import (
 	"time"
 )
 
-// Algorithm is the string type for cache algorithms
-// constants.
+// Algorithm is the string type for caching algorithms labels.
 type Algorithm string
 
 const (
@@ -62,13 +61,11 @@ type Cache struct {
 	// Expiration is the cached response expiration date.
 	Expiration time.Time
 
-	// LastAccess is the last date a cached response was
-	// accessed.
+	// LastAccess is the last date a cached response was accessed.
 	// Used by LRU and MRU algorithms.
 	LastAccess time.Time
 
-	// Frequency is the count of times a cached response
-	// is accessed.
+	// Frequency is the count of times a cached response is accessed.
 	// Used for LFU and MFU algorithms.
 	Frequency int
 }
@@ -89,8 +86,8 @@ type Config struct {
 	// response to be evicted when the capacity is reached.
 	Algorithm Algorithm
 
-	// ReleaseKey is the parameter key used to free a
-	// request cached response. Optional setting.
+	// ReleaseKey is the parameter key used to free a request cached
+	// response. Optional setting.
 	ReleaseKey string
 }
 
@@ -105,8 +102,8 @@ type Client struct {
 
 // Adapter interface for HTTP cache middleware client.
 type Adapter interface {
-	// Get retrieves the cached response by a given key.
-	// It also returns true or false, whether it exists or not.
+	// Get retrieves the cached response by a given key. It also
+	// returns true or false, whether it exists or not.
 	Get(key string) (Cache, bool)
 
 	// Set caches a response for a given key.
@@ -118,8 +115,8 @@ type Adapter interface {
 	// Length retrieves the total number of cached responses.
 	Length() int
 
-	// Evitct selects a cached response to be released based
-	// on a given algorithm.
+	// Evitct selects a cached response to be released based on a
+	// given algorithm.
 	Evict(algorithm Algorithm)
 }
 
