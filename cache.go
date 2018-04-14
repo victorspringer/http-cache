@@ -114,7 +114,7 @@ type Adapter interface {
 	// Length retrieves the total number of cached responses.
 	Length() int
 
-	// Evitct selects a cached response to be released based on a
+	// Evict selects a cached response to be released based on a
 	// given algorithm.
 	Evict(algorithm Algorithm)
 }
