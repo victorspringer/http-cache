@@ -2,7 +2,6 @@ language: go
 
 go:
   - 1.8
-  - tip
 
 before_script:
   - go get golang.org/x/tools/cmd/cover
@@ -10,4 +9,4 @@ before_script:
 
 script:
   - go test -v -covermode=count -coverprofile=coverage.out
-  - $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=travis-ci -repotoken $WXdVq3cpdXcrXRrQwQygkrlChnx3JJvxE
+  - $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=travis-ci -repotoken $COVERALLS_TOKEN
