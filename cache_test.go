@@ -134,6 +134,12 @@ func TestMiddleware(t *testing.T) {
 			302,
 		},
 		{
+			"returns new cached response",
+			"http://foo.bar/test-5",
+			"new value",
+			200,
+		},
+		{
 			"first cached response was evicted",
 			"http://foo.bar/test-1",
 			"new value",

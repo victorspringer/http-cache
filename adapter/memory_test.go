@@ -218,10 +218,9 @@ func TestEvict(t *testing.T) {
 				},
 			},
 		}
-
 		t.Run(tt.name, func(t *testing.T) {
 			m.Evict(tt.algorithm)
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 			if count == 1 {
 				_, ok := m.Get("e7bc18936aeeee6fa96bd9410a3970f4")
 				if ok {

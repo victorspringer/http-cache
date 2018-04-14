@@ -47,15 +47,18 @@ func (m *memory) Length() int {
 }
 
 func (m *memory) Evict(algorithm cache.Algorithm) {
+	m.Lock()
+	defer m.Unlock()
+
 	switch algorithm {
 	case "LRU":
-		m.lru()
+		go m.lru()
 	case "MRU":
-		m.mru()
+		go m.mru()
 	case "LFU":
-		m.lfu()
+		go m.lfu()
 	case "MFU":
-		m.mfu()
+		go m.mfu()
 	}
 }
 

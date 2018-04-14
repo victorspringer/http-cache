@@ -133,21 +133,21 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			r.URL.RawQuery = params.Encode()
 			key = generateKey(r.URL.String())
 
-			go c.adapter.Release(key)
+			c.adapter.Release(key)
 		} else {
 			cache, ok := c.adapter.Get(key)
 			if ok {
 				if cache.Expiration.After(time.Now()) {
 					cache.LastAccess = time.Now()
 					cache.Frequency++
-					go c.adapter.Set(key, cache)
+					c.adapter.Set(key, cache)
 
 					w.WriteHeader(http.StatusFound)
 					w.Write(cache.Value)
 					return
 				}
 
-				go c.adapter.Release(key)
+				c.adapter.Release(key)
 			}
 		}
 
@@ -157,7 +157,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		statusCode := rec.Result().StatusCode
 		if statusCode < 400 {
 			if c.adapter.Length() == c.capacity {
-				go c.adapter.Evict(c.algorithm)
+				c.adapter.Evict(c.algorithm)
 			}
 
 			now := time.Now()
@@ -169,7 +169,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				LastAccess: now,
 				Frequency:  1,
 			}
-			go c.adapter.Set(key, cache)
+			c.adapter.Set(key, cache)
 
 			w.WriteHeader(statusCode)
 			w.Write(value)
