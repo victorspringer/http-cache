@@ -1,8 +1,5 @@
 # http-cache
-[![Build Status](https://travis-ci.org/victorspringer/http-cache.svg?branch=master)](https://travis-ci.org/victorspringer/http-cache)
-
-[![Coverage Status](https://coveralls.io/repos/victorspringer/http-cache/badge.svg]
-(https://coveralls.io/r/victorspringer/http-cache)
+[![Build Status](https://travis-ci.org/victorspringer/http-cache.svg?branch=master)](https://travis-ci.org/victorspringer/http-cache) [![Coverage Status](https://coveralls.io/repos/victorspringer/http-cache/badge.svg)](https://coveralls.io/r/victorspringer/http-cache)
 
 This is a HTTP middleware for server-side application layer caching, ideal for Golang REST APIs.
 
