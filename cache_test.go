@@ -148,6 +148,7 @@ func TestMiddleware(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			time.Sleep(5 * time.Millisecond)
 			r, err := http.NewRequest("GET", tt.url, nil)
 			if err != nil {
 				t.Error(err)
