@@ -3,7 +3,7 @@
 
 This is a HTTP middleware for server-side application layer caching, ideal for Golang REST APIs.
 
-It is simple, fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc), algorithm (LRU, MRU, LFU, MFU) and to set up the capacity, TTL, release key and much more.
+It is simple, fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc), algorithm (LRU, MRU, LFU, MFU) and to set up the capacity, TTL and release key.
 
 ## Getting Started
 
