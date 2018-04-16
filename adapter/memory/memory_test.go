@@ -63,7 +63,7 @@ func TestSet(t *testing.T) {
 		sync.Mutex{},
 		2,
 		LRU,
-		map[uint64][]byte{},
+		make(map[uint64][]byte),
 	}
 
 	tests := []struct {
@@ -256,7 +256,7 @@ func TestNewAdapter(t *testing.T) {
 				sync.Mutex{},
 				4,
 				LRU,
-				map[uint64][]byte{},
+				make(map[uint64][]byte),
 			},
 			false,
 		},
