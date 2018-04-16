@@ -1,8 +1,6 @@
 package memory
 
 import (
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"sync"
 	"time"
@@ -46,19 +44,19 @@ type Adapter struct {
 }
 
 // Get implements the cache Adapter interface Get method.
-func (a *Adapter) Get(key uint64) (cache.Cache, bool) {
+func (a *Adapter) Get(key uint64) ([]byte, bool) {
 	a.Lock()
 	defer a.Unlock()
 
-	if b, ok := a.store[key]; ok {
-		return bytesToCache(b), true
+	if cache, ok := a.store[key]; ok {
+		return cache, true
 	}
 
-	return cache.Cache{}, false
+	return nil, false
 }
 
 // Set implements the cache Adapter interface Set method.
-func (a *Adapter) Set(key uint64, cache cache.Cache) {
+func (a *Adapter) Set(key uint64, cache []byte, expiration time.Time) {
 	a.Lock()
 	defer a.Unlock()
 
@@ -68,7 +66,7 @@ func (a *Adapter) Set(key uint64, cache cache.Cache) {
 		a.Release(<-k)
 	}
 
-	a.store[key] = cacheToBytes(cache)
+	a.store[key] = cache
 }
 
 // Release implements the Adapter interface Release method.
@@ -90,7 +88,7 @@ func (a *Adapter) evict(key chan uint64) {
 	}
 
 	for k, v := range a.store {
-		c := bytesToCache(v)
+		c := cache.BytesToCache(v)
 		switch a.algorithm {
 		case LRU:
 			if c.LastAccess.Before(lastAccess) {
@@ -117,22 +115,6 @@ func (a *Adapter) evict(key chan uint64) {
 	}
 
 	key <- selectedKey
-}
-
-func bytesToCache(b []byte) cache.Cache {
-	var c cache.Cache
-	dec := gob.NewDecoder(bytes.NewReader(b))
-	dec.Decode(&c)
-
-	return c
-}
-
-func cacheToBytes(cache cache.Cache) []byte {
-	var b bytes.Buffer
-	enc := gob.NewEncoder(&b)
-	enc.Encode(&cache)
-
-	return b.Bytes()
 }
 
 // NewAdapter initializes memory adapter.

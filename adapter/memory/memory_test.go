@@ -15,12 +15,12 @@ func TestGet(t *testing.T) {
 		2,
 		LRU,
 		map[uint64][]byte{
-			14974843192121052621: cacheToBytes(cache.Cache{
+			14974843192121052621: cache.Cache{
 				Value:      []byte("value 1"),
 				Expiration: time.Now(),
 				LastAccess: time.Now(),
 				Frequency:  1,
-			}),
+			}.Bytes(),
 		},
 	}
 
@@ -45,13 +45,14 @@ func TestGet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := a.Get(tt.key)
+			b, ok := a.Get(tt.key)
 			if ok != tt.ok {
 				t.Errorf("memory.Get() ok = %v, tt.ok %v", ok, tt.ok)
 				return
 			}
-			if !reflect.DeepEqual(got.Value, tt.want) {
-				t.Errorf("memory.Get() = %v, want %v", got.Value, tt.want)
+			got := cache.BytesToCache(b).Value
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("memory.Get() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -97,8 +98,8 @@ func TestSet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a.Set(tt.key, tt.cache)
-			if bytesToCache(a.store[tt.key]).Value == nil {
+			a.Set(tt.key, tt.cache.Bytes(), tt.cache.Expiration)
+			if cache.BytesToCache(a.store[tt.key]).Value == nil {
 				t.Errorf("memory.Set() error = store[%v] response is not %s", tt.key, tt.cache.Value)
 			}
 		})
@@ -111,18 +112,18 @@ func TestRelease(t *testing.T) {
 		2,
 		LRU,
 		map[uint64][]byte{
-			14974843192121052621: cacheToBytes(cache.Cache{
+			14974843192121052621: cache.Cache{
 				Expiration: time.Now().Add(1 * time.Minute),
 				Value:      []byte("value 1"),
-			}),
-			14974839893586167988: cacheToBytes(cache.Cache{
+			}.Bytes(),
+			14974839893586167988: cache.Cache{
 				Expiration: time.Now(),
 				Value:      []byte("value 2"),
-			}),
-			14974840993097796199: cacheToBytes(cache.Cache{
+			}.Bytes(),
+			14974840993097796199: cache.Cache{
 				Expiration: time.Now(),
 				Value:      []byte("value 3"),
-			}),
+			}.Bytes(),
 		},
 	}
 
@@ -188,24 +189,24 @@ func TestEvict(t *testing.T) {
 			2,
 			tt.algorithm,
 			map[uint64][]byte{
-				14974843192121052621: cacheToBytes(cache.Cache{
+				14974843192121052621: cache.Cache{
 					Value:      []byte("value 1"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-1 * time.Minute),
 					Frequency:  2,
-				}),
-				14974839893586167988: cacheToBytes(cache.Cache{
+				}.Bytes(),
+				14974839893586167988: cache.Cache{
 					Value:      []byte("value 2"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-2 * time.Minute),
 					Frequency:  1,
-				}),
-				14974840993097796199: cacheToBytes(cache.Cache{
+				}.Bytes(),
+				14974840993097796199: cache.Cache{
 					Value:      []byte("value 3"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-3 * time.Minute),
 					Frequency:  3,
-				}),
+				}.Bytes(),
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {
@@ -233,65 +234,6 @@ func TestEvict(t *testing.T) {
 						t.Errorf("mfu is not working properly")
 					}
 				}
-			}
-		})
-	}
-}
-
-func TestBytesToCache(t *testing.T) {
-	c := cache.Cache{
-		Value:      []byte("value 1"),
-		Expiration: time.Time{},
-		Frequency:  0,
-		LastAccess: time.Time{},
-	}
-
-	tests := []struct {
-		name      string
-		b         []byte
-		wantValue string
-	}{
-
-		{
-			"convert byte array to cache",
-			cacheToBytes(c),
-			"value 1",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := bytesToCache(tt.b)
-			if string(got.Value) != tt.wantValue {
-				t.Errorf("bytesToCache() Value = %v, want %v", got, tt.wantValue)
-				return
-			}
-		})
-	}
-}
-
-func TestCacheToBytes(t *testing.T) {
-	c := cache.Cache{
-		Value:      nil,
-		Expiration: time.Time{},
-		Frequency:  0,
-		LastAccess: time.Time{},
-	}
-
-	tests := []struct {
-		name  string
-		cache cache.Cache
-	}{
-		{
-			"convert cache to byte array",
-			c,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := cacheToBytes(tt.cache)
-			if b == nil || len(b) == 0 {
-				t.Error("cacheToBytes() failed to convert")
-				return
 			}
 		})
 	}

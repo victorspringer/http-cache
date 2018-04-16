@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -21,27 +20,27 @@ type Adapter struct {
 type RingOptions redis.RingOptions
 
 // Get implements the cache Adapter interface Get method.
-func (a *Adapter) Get(key uint64) (cache.Cache, bool) {
+func (a *Adapter) Get(key uint64) ([]byte, bool) {
 	a.Lock()
 	defer a.Unlock()
 
-	var c cache.Cache
+	var c []byte
 	if err := a.store.Get(string(key), &c); err == nil {
 		return c, true
 	}
 
-	return cache.Cache{}, false
+	return nil, false
 }
 
 // Set implements the cache Adapter interface Set method.
-func (a *Adapter) Set(key uint64, cache cache.Cache) {
+func (a *Adapter) Set(key uint64, cache []byte, expiration time.Time) {
 	a.Lock()
 	defer a.Unlock()
-	fmt.Println(cache.Expiration.Sub(time.Now()))
+
 	a.store.Set(&redisCache.Item{
 		Key:        string(key),
 		Object:     cache,
-		Expiration: cache.Expiration.Sub(time.Now()),
+		Expiration: expiration.Sub(time.Now()),
 	})
 }
 

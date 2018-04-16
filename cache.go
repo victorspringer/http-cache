@@ -25,6 +25,8 @@ SOFTWARE.
 package cache
 
 import (
+	"bytes"
+	"encoding/gob"
 	"errors"
 	"hash/fnv"
 	"net/http"
@@ -76,10 +78,10 @@ type Client struct {
 type Adapter interface {
 	// Get retrieves the cached response by a given key. It also
 	// returns true or false, whether it exists or not.
-	Get(key uint64) (Cache, bool)
+	Get(key uint64) ([]byte, bool)
 
-	// Set caches a response for a given key.
-	Set(key uint64, cache Cache)
+	// Set caches a response for a given key until an expiration date.
+	Set(key uint64, cache []byte, expiration time.Time)
 
 	// Release frees cache for a given key.
 	Release(key uint64)
@@ -100,12 +102,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 			c.adapter.Release(key)
 		} else {
-			cache, ok := c.adapter.Get(key)
+			b, ok := c.adapter.Get(key)
+			cache := BytesToCache(b)
 			if ok {
 				if cache.Expiration.After(time.Now()) {
 					cache.LastAccess = time.Now()
 					cache.Frequency++
-					c.adapter.Set(key, cache)
+					c.adapter.Set(key, cache.Bytes(), cache.Expiration)
 
 					w.WriteHeader(http.StatusFound)
 					w.Write(cache.Value)
@@ -130,12 +133,30 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				LastAccess: now,
 				Frequency:  1,
 			}
-			c.adapter.Set(key, cache)
+			c.adapter.Set(key, cache.Bytes(), cache.Expiration)
 
 			w.WriteHeader(statusCode)
 			w.Write(value)
 		}
 	})
+}
+
+// BytesToCache converts byte array into Cache data structure.
+func BytesToCache(b []byte) Cache {
+	var c Cache
+	dec := gob.NewDecoder(bytes.NewReader(b))
+	dec.Decode(&c)
+
+	return c
+}
+
+// Bytes converts Cache data structure into byte array.
+func (cache Cache) Bytes() []byte {
+	var b bytes.Buffer
+	enc := gob.NewEncoder(&b)
+	enc.Encode(&cache)
+
+	return b.Bytes()
 }
 
 func sortURLParams(URL *url.URL) {
