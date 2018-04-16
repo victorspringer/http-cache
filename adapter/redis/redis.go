@@ -51,26 +51,18 @@ func (a *Adapter) Release(key uint64) {
 }
 
 // NewAdapter initializes Redis adapter.
-func NewAdapter() cache.Adapter {
-	ring := redis.NewRing(&redis.RingOptions{
-		Addrs: map[string]string{
-			"server": ":6379",
-		},
-	})
-
-	codec := &redisCache.Codec{
-		Redis: ring,
-		Marshal: func(v interface{}) ([]byte, error) {
-			return msgpack.Marshal(v)
-
-		},
-		Unmarshal: func(b []byte, v interface{}) error {
-			return msgpack.Unmarshal(b, v)
-		},
-	}
-
+func NewAdapter(opt *redis.RingOptions) cache.Adapter {
 	return &Adapter{
 		sync.Mutex{},
-		codec,
+		&redisCache.Codec{
+			Redis: redis.NewRing(opt),
+			Marshal: func(v interface{}) ([]byte, error) {
+				return msgpack.Marshal(v)
+
+			},
+			Unmarshal: func(b []byte, v interface{}) error {
+				return msgpack.Unmarshal(b, v)
+			},
+		},
 	}
 }
