@@ -36,29 +36,6 @@ func (a *adapterMock) Release(key string) {
 	delete(a.store, key)
 }
 
-func (a *adapterMock) Length() int {
-	a.Lock()
-	defer a.Unlock()
-	return len(a.store)
-}
-
-func (a *adapterMock) Evict(algorithm Algorithm) {
-	a.Lock()
-	defer a.Unlock()
-
-	lruKey := ""
-	lruLastAccess := time.Now().Add(2 * time.Minute)
-
-	for key, value := range a.store {
-		if value.LastAccess.Before(lruLastAccess) {
-			lruKey = key
-			lruLastAccess = value.LastAccess
-		}
-	}
-
-	go a.Release(lruKey)
-}
-
 func TestMiddleware(t *testing.T) {
 	httpTestHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("new value"))
@@ -84,8 +61,6 @@ func TestMiddleware(t *testing.T) {
 	client, _ := NewClient(Config{
 		Adapter:    adapter,
 		TTL:        1 * time.Minute,
-		Capacity:   4,
-		Algorithm:  LRU,
 		ReleaseKey: "rk",
 	})
 
@@ -111,9 +86,15 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			"no cached response returns ok status",
-			"http://foo.bar/test-3",
+			"http://foo.bar/test-3?zaz=baz&baz=zaz",
 			"new value",
 			200,
+		},
+		{
+			"returns cached response",
+			"http://foo.bar/test-3?baz=zaz&zaz=baz",
+			"new value",
+			302,
 		},
 		{
 			"cache expired",
@@ -133,22 +114,9 @@ func TestMiddleware(t *testing.T) {
 			"new value",
 			302,
 		},
-		{
-			"returns new cached response",
-			"http://foo.bar/test-5",
-			"new value",
-			200,
-		},
-		{
-			"first cached response was evicted",
-			"http://foo.bar/test-1",
-			"new value",
-			200,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			time.Sleep(5 * time.Millisecond)
 			r, err := http.NewRequest("GET", tt.url, nil)
 			if err != nil {
 				t.Error(err)
@@ -169,104 +137,6 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
-func TestNewClient(t *testing.T) {
-	adapter := &adapterMock{}
-
-	tests := []struct {
-		name    string
-		cfg     Config
-		want    *Client
-		wantErr bool
-	}{
-		{
-			"return new client",
-			Config{
-				Adapter:   adapter,
-				TTL:       1 * time.Millisecond,
-				Algorithm: LRU,
-				Capacity:  3,
-			},
-			&Client{
-				adapter:    adapter,
-				ttl:        1 * time.Millisecond,
-				algorithm:  LRU,
-				capacity:   3,
-				releaseKey: "",
-			},
-			false,
-		},
-		{
-			"return new client with release key",
-			Config{
-				Adapter:    adapter,
-				TTL:        1 * time.Millisecond,
-				Algorithm:  LRU,
-				Capacity:   3,
-				ReleaseKey: "rk",
-			},
-			&Client{
-				adapter:    adapter,
-				ttl:        1 * time.Millisecond,
-				algorithm:  LRU,
-				capacity:   3,
-				releaseKey: "rk",
-			},
-			false,
-		},
-		{
-			"return error",
-			Config{
-				Adapter: adapter,
-			},
-			nil,
-			true,
-		},
-		{
-			"return error",
-			Config{
-				TTL:        1 * time.Millisecond,
-				ReleaseKey: "rk",
-			},
-			nil,
-			true,
-		},
-		{
-			"return error",
-			Config{
-				Adapter:    adapter,
-				TTL:        1 * time.Millisecond,
-				Algorithm:  LRU,
-				ReleaseKey: "rk",
-			},
-			nil,
-			true,
-		},
-		{
-			"return error",
-			Config{
-				Adapter:    adapter,
-				TTL:        1 * time.Millisecond,
-				Capacity:   3,
-				ReleaseKey: "rk",
-			},
-			nil,
-			true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewClient() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestSortURLParams(t *testing.T) {
 	u, _ := url.Parse("http://test.com?zaz=bar&foo=zaz&boo=foo&boo=baz")
 	tests := []struct {
@@ -275,7 +145,7 @@ func TestSortURLParams(t *testing.T) {
 		want string
 	}{
 		{
-			"return url with ordered querystring params",
+			"returns url with ordered querystring params",
 			u,
 			"http://test.com?boo=baz&boo=foo&foo=zaz&zaz=bar",
 		},
@@ -312,6 +182,74 @@ func TestGenerateKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := generateKey(tt.URL); got != tt.want {
 				t.Errorf("generateKey() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewClient(t *testing.T) {
+	adapter := &adapterMock{}
+
+	tests := []struct {
+		name    string
+		cfg     Config
+		want    *Client
+		wantErr bool
+	}{
+		{
+			"returns new client",
+			Config{
+				Adapter: adapter,
+				TTL:     1 * time.Millisecond,
+			},
+			&Client{
+				adapter:    adapter,
+				ttl:        1 * time.Millisecond,
+				releaseKey: "",
+			},
+			false,
+		},
+		{
+			"returns new client with release key",
+			Config{
+				Adapter:    adapter,
+				TTL:        1 * time.Millisecond,
+				ReleaseKey: "rk",
+			},
+			&Client{
+				adapter:    adapter,
+				ttl:        1 * time.Millisecond,
+				releaseKey: "rk",
+			},
+			false,
+		},
+		{
+			"returns error",
+			Config{
+				Adapter: adapter,
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			Config{
+				TTL:        1 * time.Millisecond,
+				ReleaseKey: "rk",
+			},
+			nil,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewClient(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("NewClient() = %v, want %v", got, tt.want)
 			}
 		})
 	}

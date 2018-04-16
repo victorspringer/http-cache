@@ -35,23 +35,6 @@ import (
 	"time"
 )
 
-// Algorithm is the string type for caching algorithms labels.
-type Algorithm string
-
-const (
-	// LRU is the constant for Least Recently Used.
-	LRU Algorithm = "LRU"
-
-	// MRU is the constant for Most Recently Used.
-	MRU Algorithm = "MRU"
-
-	// LFU is the constant for Least Frequently Used.
-	LFU Algorithm = "LFU"
-
-	// MFU is the constant for Most Frequently Used.
-	MFU Algorithm = "MFU"
-)
-
 // Cache is the cache data structure.
 type Cache struct {
 	// Value is the cached response value.
@@ -78,13 +61,6 @@ type Config struct {
 	// TTL is how long a response is going to be cached.
 	TTL time.Duration
 
-	// Capacity is the maximum number of cached responses.
-	Capacity int
-
-	// Algorithm is the approach used to select a cached
-	// response to be evicted when the capacity is reached.
-	Algorithm Algorithm
-
 	// ReleaseKey is the parameter key used to free a request cached
 	// response. Optional setting.
 	ReleaseKey string
@@ -94,8 +70,6 @@ type Config struct {
 type Client struct {
 	adapter    Adapter
 	ttl        time.Duration
-	capacity   int
-	algorithm  Algorithm
 	releaseKey string
 }
 
@@ -110,13 +84,6 @@ type Adapter interface {
 
 	// Release frees cache for a given key.
 	Release(key string)
-
-	// Length retrieves the total number of cached responses.
-	Length() int
-
-	// Evict selects a cached response to be released based on a
-	// given algorithm.
-	Evict(algorithm Algorithm)
 }
 
 // Middleware is the HTTP cache middleware handler.
@@ -155,10 +122,6 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 		statusCode := rec.Result().StatusCode
 		if statusCode < 400 {
-			if c.adapter.Length() == c.capacity {
-				c.adapter.Evict(c.algorithm)
-			}
-
 			now := time.Now()
 			value := rec.Body.Bytes()
 
@@ -176,36 +139,6 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// NewClient initializes the cache HTTP middleware client with a given
-// configuration.
-func NewClient(cfg Config) (*Client, error) {
-	if cfg.Adapter == nil {
-		return nil, errors.New("cache client requires an adapter")
-	}
-
-	if int64(cfg.TTL) < 1 {
-		return nil, errors.New("cache client requires a valid ttl")
-	}
-
-	if cfg.Capacity <= 1 {
-		return nil, errors.New("cache client requires a capacity greater than one")
-	}
-
-	if cfg.Algorithm == "" {
-		return nil, errors.New("cache client requires an algorithm")
-	}
-
-	c := &Client{
-		adapter:    cfg.Adapter,
-		ttl:        cfg.TTL,
-		capacity:   cfg.Capacity,
-		algorithm:  cfg.Algorithm,
-		releaseKey: cfg.ReleaseKey,
-	}
-
-	return c, nil
-}
-
 func sortURLParams(URL *url.URL) {
 	params := URL.Query()
 	for _, param := range params {
@@ -218,4 +151,24 @@ func sortURLParams(URL *url.URL) {
 
 func generateKey(URL string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(URL)))
+}
+
+// NewClient initializes the cache HTTP middleware client with a given
+// configuration.
+func NewClient(cfg Config) (*Client, error) {
+	if cfg.Adapter == nil {
+		return nil, errors.New("cache client requires an adapter")
+	}
+
+	if int64(cfg.TTL) < 1 {
+		return nil, errors.New("cache client requires a valid ttl")
+	}
+
+	c := &Client{
+		adapter:    cfg.Adapter,
+		ttl:        cfg.TTL,
+		releaseKey: cfg.ReleaseKey,
+	}
+
+	return c, nil
 }

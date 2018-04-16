@@ -1,4 +1,4 @@
-package adapter
+package memory
 
 import (
 	"reflect"
@@ -10,8 +10,10 @@ import (
 )
 
 func TestGet(t *testing.T) {
-	m := &memory{
+	a := &Adapter{
 		sync.Mutex{},
+		2,
+		LRU,
 		map[string]cache.Cache{
 			"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
 				Value:      []byte("value 1"),
@@ -43,7 +45,7 @@ func TestGet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := m.Get(tt.key)
+			got, ok := a.Get(tt.key)
 			if ok != tt.ok {
 				t.Errorf("memory.Get() ok = %v, tt.ok %v", ok, tt.ok)
 				return
@@ -56,8 +58,10 @@ func TestGet(t *testing.T) {
 }
 
 func TestSet(t *testing.T) {
-	m := &memory{
+	a := &Adapter{
 		sync.Mutex{},
+		2,
+		LRU,
 		map[string]cache.Cache{},
 	}
 
@@ -68,17 +72,33 @@ func TestSet(t *testing.T) {
 	}{
 		{
 			"sets a response cache",
-			"1e13f750b4d13e03a775f9d09032f87b",
+			"first",
 			cache.Cache{
 				Value:      []byte("value 1"),
+				Expiration: time.Now().Add(1 * time.Minute),
+			},
+		},
+		{
+			"sets a response cache",
+			"second",
+			cache.Cache{
+				Value:      []byte("value 2"),
+				Expiration: time.Now().Add(1 * time.Minute),
+			},
+		},
+		{
+			"sets a response cache",
+			"third",
+			cache.Cache{
+				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m.Set(tt.key, tt.cache)
-			if m.store[tt.key].Value == nil {
+			a.Set(tt.key, tt.cache)
+			if a.store[tt.key].Value == nil {
 				t.Errorf("memory.Set() error = store[%s] response is not %s", tt.key, tt.cache.Value)
 			}
 		})
@@ -86,8 +106,10 @@ func TestSet(t *testing.T) {
 }
 
 func TestRelease(t *testing.T) {
-	m := &memory{
+	a := &Adapter{
 		sync.Mutex{},
+		2,
+		LRU,
 		map[string]cache.Cache{
 			"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
 				Expiration: time.Now().Add(1 * time.Minute),
@@ -125,78 +147,44 @@ func TestRelease(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m.Release(tt.key)
-			if len(m.store) > tt.storeLength {
-				t.Errorf("memory.Release() error; store length = %v, want 0", len(m.store))
-			}
-		})
-	}
-}
-
-func TestLength(t *testing.T) {
-	m := &memory{
-		sync.Mutex{},
-		map[string]cache.Cache{
-			"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
-				Expiration: time.Now().Add(1 * time.Minute),
-				Value:      []byte("value 1"),
-			},
-			"48c169c22f6ae6351993050852982723": cache.Cache{
-				Expiration: time.Now(),
-				Value:      []byte("value 2"),
-			},
-			"e7bc18936aeeee6fa96bd9410a3970f4": cache.Cache{
-				Expiration: time.Now(),
-				Value:      []byte("value 3"),
-			},
-		},
-	}
-
-	tests := []struct {
-		name string
-		want int
-	}{
-		{
-			"returns right store lentgh",
-			3,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := m.Length(); got != tt.want {
-				t.Errorf("memory.Length() = %v, want %v", got, tt.want)
+			a.Release(tt.key)
+			if len(a.store) > tt.storeLength {
+				t.Errorf("memory.Release() error; store length = %v, want 0", len(a.store))
 			}
 		})
 	}
 }
 
 func TestEvict(t *testing.T) {
+	done := make(chan string, 1)
 	tests := []struct {
 		name      string
-		algorithm cache.Algorithm
+		algorithm Algorithm
 	}{
 		{
 			"lru removes third cache",
-			cache.LRU,
+			LRU,
 		},
 		{
 			"mru removes first cache",
-			cache.MRU,
+			MRU,
 		},
 		{
 			"lfu removes second cache",
-			cache.LFU,
+			LFU,
 		},
 		{
 			"mfu removes third cache",
-			cache.MFU,
+			MFU,
 		},
 	}
 	count := 0
 	for _, tt := range tests {
 		count++
-		m := &memory{
+		a := &Adapter{
 			sync.Mutex{},
+			2,
+			tt.algorithm,
 			map[string]cache.Cache{
 				"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
 					Value:      []byte("value 1"),
@@ -219,33 +207,81 @@ func TestEvict(t *testing.T) {
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			m.Evict(tt.algorithm)
-			time.Sleep(5 * time.Millisecond)
+			a.evict(done)
+			key := <-done
 			if count == 1 {
-				_, ok := m.Get("e7bc18936aeeee6fa96bd9410a3970f4")
-				if ok {
+				if key != "e7bc18936aeeee6fa96bd9410a3970f4" {
 					t.Errorf("lru is not working properly")
 					return
 				}
 			} else if count == 2 {
-				_, ok := m.Get("1e13f750b4d13e03a775f9d09032f87b")
-				if ok {
+				if key != "1e13f750b4d13e03a775f9d09032f87b" {
 					t.Errorf("mru is not working properly")
 					return
 				}
 			} else if count == 3 {
-				_, ok := m.Get("48c169c22f6ae6351993050852982723")
-				if ok {
+				if key != "48c169c22f6ae6351993050852982723" {
 					t.Errorf("lfu is not working properly")
 					return
 				}
 			} else {
 				if count == 4 {
-					_, ok := m.Get("e7bc18936aeeee6fa96bd9410a3970f4")
-					if ok {
+					if key != "e7bc18936aeeee6fa96bd9410a3970f4" {
 						t.Errorf("mfu is not working properly")
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestNewAdapter(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		want    cache.Adapter
+		wantErr bool
+	}{
+		{
+			"returns new Adapter",
+			&Config{
+				4,
+				LRU,
+			},
+			&Adapter{
+				sync.Mutex{},
+				4,
+				LRU,
+				map[string]cache.Cache{},
+			},
+			false,
+		},
+		{
+			"returns error",
+			&Config{
+				Algorithm: LRU,
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			&Config{
+				Capacity: 4,
+			},
+			nil,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewAdapter(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NewAdapter() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("NewAdapter() = %v, want %v", got, tt.want)
 			}
 		})
 	}
