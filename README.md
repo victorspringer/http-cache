@@ -43,7 +43,7 @@ func main() {
     }
 
     cacheClient, err := cache.NewClient(
-        cache.Config{
+        &cache.Config{
             Adapter:    memcached,
             ReleaseKey: "opn",
             TTL:        10 * time.Minute,
@@ -76,7 +76,7 @@ import (
         },
     }
     cacheClient := cache.NewClient(
-        cache.Config{
+        &cache.Config{
             Adapter:    redis.NewAdapter(ringOpt),
             ReleaseKey: "opn",
             TTL:        10 * time.Minute,
