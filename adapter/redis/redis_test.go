@@ -11,7 +11,11 @@ import (
 var a cache.Adapter
 
 func TestSet(t *testing.T) {
-	a = NewAdapter()
+	a = NewAdapter(&RingOptions{
+		Addrs: map[string]string{
+			"server": ":6379",
+		},
+	})
 
 	tests := []struct {
 		name  string
