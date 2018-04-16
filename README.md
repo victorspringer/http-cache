@@ -61,6 +61,31 @@ func main() {
 }
 ```
 
+Example of Client initialization with Redis adapter:
+```go
+import (
+    redis "github.com/go-redis/redis"
+    redisAdapter "github.com/victorspringer/http-cache/adapter/redis"
+    cache "github.com/victorspringer/http-cache"
+)
+
+func main() {
+    ringOpt := &redis.RingOptions{
+        Addrs: map[string]string{
+            "server": ":6379",
+        },
+    }
+    cacheClient := cache.NewClient(
+        cache.Config{
+            Adapter:    redisAdapter.NewAdapter(ringOpt),
+            ReleaseKey: "opn",
+            TTL:        10 * time.Minute,
+        },
+    )
+    ...
+}
+```
+
 ## Roadmap
 - Benchmarks
 - Develop DynamoDB adapter
