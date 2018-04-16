@@ -66,5 +66,7 @@ func main() {
 - Develop DynamoDB adapter
 - Develop MongoDB adapter
 
-## Documentation
-[https://godoc.org/github.com/victorspringer/http-cache](https://godoc.org/github.com/victorspringer/http-cache)
+## Godoc Reference
+- [http-cache](https://godoc.org/github.com/victorspringer/http-cache)
+- [Memory adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/memory)
+- [Redis adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/redis)
