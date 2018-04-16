@@ -23,7 +23,7 @@ import (
     "time"
     
     "github.com/victorspringer/http-cache"
-    "github.com/victorspringer/http-cache/adapter"
+    "github.com/victorspringer/http-cache/adapter/memory"
 )
 
 func example(w http.ResponseWriter, r *http.Request) {
