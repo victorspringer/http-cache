@@ -157,7 +157,7 @@ func generateKey(URL string) uint64 {
 
 // NewClient initializes the cache HTTP middleware client with a given
 // configuration.
-func NewClient(cfg Config) (*Client, error) {
+func NewClient(cfg *Config) (*Client, error) {
 	if cfg.Adapter == nil {
 		return nil, errors.New("cache client requires an adapter")
 	}

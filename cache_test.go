@@ -58,7 +58,7 @@ func TestMiddleware(t *testing.T) {
 		},
 	}
 
-	client, _ := NewClient(Config{
+	client, _ := NewClient(&Config{
 		Adapter:    adapter,
 		TTL:        1 * time.Minute,
 		ReleaseKey: "rk",
@@ -197,13 +197,13 @@ func TestNewClient(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		cfg     Config
+		cfg     *Config
 		want    *Client
 		wantErr bool
 	}{
 		{
 			"returns new client",
-			Config{
+			&Config{
 				Adapter: adapter,
 				TTL:     1 * time.Millisecond,
 			},
@@ -216,7 +216,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			"returns new client with release key",
-			Config{
+			&Config{
 				Adapter:    adapter,
 				TTL:        1 * time.Millisecond,
 				ReleaseKey: "rk",
@@ -230,7 +230,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			"returns error",
-			Config{
+			&Config{
 				Adapter: adapter,
 			},
 			nil,
@@ -238,7 +238,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			"returns error",
-			Config{
+			&Config{
 				TTL:        1 * time.Millisecond,
 				ReleaseKey: "rk",
 			},
