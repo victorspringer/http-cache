@@ -1,11 +1,18 @@
+sudo: required
+
 language: go
 
 go:
   - 1.8
 
+services:
+  - docker
+
 before_script:
   - go get golang.org/x/tools/cmd/cover
   - go get github.com/mattn/goveralls
+  - docker pull redis
+  - docker run -it -d -p 6379:6379 redis
 
 script:
   - go test -v -covermode=count -coverprofile=coverage.out
