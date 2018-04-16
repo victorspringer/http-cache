@@ -255,7 +255,7 @@ func parallelKey(threadID int, counter int) uint64 {
 
 func initHTTPCacheMamoryAdapter(entries int) (cache.Adapter, time.Time) {
 	if entries < 2 {
-		entries = 999999999
+		entries = 50000000
 	}
 	adapter, _ := memory.NewAdapter(&memory.Config{
 		Capacity:  entries,
