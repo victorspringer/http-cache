@@ -3,7 +3,7 @@
 
 This is a HTTP middleware for server-side application layer caching, ideal for Golang REST APIs.
 
-It is simple, fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc), algorithm (LRU, MRU, LFU, MFU) and to set up the capacity, TTL and release key.
+It is simple, fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc).
 
 ## Getting Started
 
@@ -11,6 +11,8 @@ It is simple, fast, thread safe and gives the possibility to choose the adapter 
 `go get github.com/victorspringer/http-cache`
 
 ### Usage
+This is an example of use with the memory adapter:
+
 ```go
 package main
 
@@ -19,7 +21,7 @@ import (
     "net/http"
     "os"
     "time"
-
+    
     "github.com/victorspringer/http-cache"
     "github.com/victorspringer/http-cache/adapter"
 )
@@ -29,14 +31,24 @@ func example(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-    cfg := cache.Config{
-        Adapter:    adapter.Memory(),
-        ReleaseKey: "opn",
-        TTL:        10 * time.Minute,
-        Capacity:   1000,
-        Algorithm:  cache.LFU,
-    }
-    cacheClient, err := cache.NewClient(cfg)
+    memcached, err := memory.NewAdapter(
+        &memory.Config{
+            Algorithm: memory.LRU,
+            Capacity:  10,
+        },
+    )
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+    cacheClient, err := cache.NewClient(
+        cache.Config{
+            Adapter:    memcached,
+            ReleaseKey: "opn",
+            TTL:        10 * time.Minute,
+        },
+    )
     if err != nil {
         fmt.Println(err)
         os.Exit(1)
@@ -48,6 +60,9 @@ func main() {
     http.ListenAndServe(":8080", nil)
 }
 ```
+
+## Roadmap
+- Solve the GC overhead issue in memory adapter
 
 ## Documentation
 [https://godoc.org/github.com/victorspringer/http-cache](https://godoc.org/github.com/victorspringer/http-cache)
