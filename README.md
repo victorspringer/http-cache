@@ -62,7 +62,7 @@ func main() {
 ```
 
 ## Roadmap
-- Solve the GC overhead issue in memory adapter
+- Benchmarks
 - Develop DynamoDB adapter
 - Develop MongoDB adapter
 

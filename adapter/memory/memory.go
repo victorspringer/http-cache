@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"bytes"
+	"encoding/gob"
 	"errors"
 	"sync"
 	"time"
@@ -40,40 +42,97 @@ type Adapter struct {
 	sync.Mutex
 	capacity  int
 	algorithm Algorithm
-	store     map[string]cache.Cache
+	store     map[uint64][]byte
 }
 
 // Get implements the cache Adapter interface Get method.
-func (a *Adapter) Get(key string) (cache.Cache, bool) {
+func (a *Adapter) Get(key uint64) (cache.Cache, bool) {
 	a.Lock()
 	defer a.Unlock()
 
-	if cache, ok := a.store[key]; ok {
-		return cache, true
+	if b, ok := a.store[key]; ok {
+		return bytesToCache(b), true
 	}
 
 	return cache.Cache{}, false
 }
 
 // Set implements the cache Adapter interface Set method.
-func (a *Adapter) Set(key string, cache cache.Cache) {
+func (a *Adapter) Set(key uint64, cache cache.Cache) {
 	a.Lock()
 	defer a.Unlock()
 
 	if len(a.store) == a.capacity {
-		k := make(chan string, 1)
+		k := make(chan uint64, 1)
 		go a.evict(k)
 		a.Release(<-k)
 	}
 
-	a.store[key] = cache
+	a.store[key] = cacheToBytes(cache)
 }
 
 // Release implements the Adapter interface Release method.
-func (a *Adapter) Release(key string) {
+func (a *Adapter) Release(key uint64) {
 	if _, ok := a.store[key]; ok {
 		delete(a.store, key)
 	}
+}
+
+func (a *Adapter) evict(key chan uint64) {
+	selectedKey := uint64(0)
+	lastAccess := time.Now()
+	frequency := 9999999999999
+
+	if a.algorithm == MRU {
+		lastAccess = time.Time{}
+	} else if a.algorithm == MFU {
+		frequency = 0
+	}
+
+	for k, v := range a.store {
+		c := bytesToCache(v)
+		switch a.algorithm {
+		case LRU:
+			if c.LastAccess.Before(lastAccess) {
+				selectedKey = k
+				lastAccess = c.LastAccess
+			}
+		case MRU:
+			if c.LastAccess.After(lastAccess) ||
+				c.LastAccess.Equal(lastAccess) {
+				selectedKey = k
+				lastAccess = c.LastAccess
+			}
+		case LFU:
+			if c.Frequency < frequency {
+				selectedKey = k
+				frequency = c.Frequency
+			}
+		case MFU:
+			if c.Frequency >= frequency {
+				selectedKey = k
+				frequency = c.Frequency
+			}
+		}
+	}
+
+	key <- selectedKey
+}
+
+func bytesToCache(b []byte) cache.Cache {
+	var c cache.Cache
+	dec := gob.NewDecoder(bytes.NewReader(b))
+	dec.Decode(&c)
+
+	return c
+}
+
+func cacheToBytes(cache cache.Cache) []byte {
+	var b bytes.Buffer
+	enc := gob.NewEncoder(&b)
+	enc.Encode(&cache)
+
+	return b.Bytes()
 }
 
 // NewAdapter initializes memory adapter.
@@ -90,60 +149,6 @@ func NewAdapter(cfg *Config) (cache.Adapter, error) {
 		sync.Mutex{},
 		cfg.Capacity,
 		cfg.Algorithm,
-		map[string]cache.Cache{},
+		map[uint64][]byte{},
 	}, nil
-}
-
-func (a *Adapter) evict(key chan string) {
-	switch a.algorithm {
-	case "LRU":
-		lruKey := ""
-		lruLastAccess := time.Now()
-
-		for key, value := range a.store {
-			if value.LastAccess.Before(lruLastAccess) {
-				lruKey = key
-				lruLastAccess = value.LastAccess
-			}
-		}
-
-		key <- lruKey
-	case "MRU":
-		mruKey := ""
-		mruLastAccess := time.Time{}
-
-		for key, value := range a.store {
-			if value.LastAccess.After(mruLastAccess) ||
-				value.LastAccess.Equal(mruLastAccess) {
-				mruKey = key
-				mruLastAccess = value.LastAccess
-			}
-		}
-
-		key <- mruKey
-	case "LFU":
-		lfuKey := ""
-		lfuFrequency := 9999999999999
-
-		for key, value := range a.store {
-			if value.Frequency < lfuFrequency {
-				lfuKey = key
-				lfuFrequency = value.Frequency
-			}
-		}
-
-		key <- lfuKey
-	case "MFU":
-		mfuKey := ""
-		mfuFrequency := 0
-
-		for key, value := range a.store {
-			if value.Frequency >= mfuFrequency {
-				mfuKey = key
-				mfuFrequency = value.Frequency
-			}
-		}
-
-		key <- mfuKey
-	}
 }

@@ -25,9 +25,8 @@ SOFTWARE.
 package cache
 
 import (
-	"crypto/md5"
 	"errors"
-	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -77,13 +76,13 @@ type Client struct {
 type Adapter interface {
 	// Get retrieves the cached response by a given key. It also
 	// returns true or false, whether it exists or not.
-	Get(key string) (Cache, bool)
+	Get(key uint64) (Cache, bool)
 
 	// Set caches a response for a given key.
-	Set(key string, cache Cache)
+	Set(key uint64, cache Cache)
 
 	// Release frees cache for a given key.
-	Release(key string)
+	Release(key uint64)
 }
 
 // Middleware is the HTTP cache middleware handler.
@@ -149,8 +148,11 @@ func sortURLParams(URL *url.URL) {
 	URL.RawQuery = params.Encode()
 }
 
-func generateKey(URL string) string {
-	return fmt.Sprintf("%x", md5.Sum([]byte(URL)))
+func generateKey(URL string) uint64 {
+	hash := fnv.New64a()
+	hash.Write([]byte(URL))
+
+	return hash.Sum64()
 }
 
 // NewClient initializes the cache HTTP middleware client with a given

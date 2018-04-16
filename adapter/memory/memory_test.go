@@ -14,31 +14,31 @@ func TestGet(t *testing.T) {
 		sync.Mutex{},
 		2,
 		LRU,
-		map[string]cache.Cache{
-			"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
+		map[uint64][]byte{
+			14974843192121052621: cacheToBytes(cache.Cache{
 				Value:      []byte("value 1"),
 				Expiration: time.Now(),
 				LastAccess: time.Now(),
 				Frequency:  1,
-			},
+			}),
 		},
 	}
 
 	tests := []struct {
 		name string
-		key  string
+		key  uint64
 		want []byte
 		ok   bool
 	}{
 		{
 			"returns right response",
-			"1e13f750b4d13e03a775f9d09032f87b",
+			14974843192121052621,
 			[]byte("value 1"),
 			true,
 		},
 		{
 			"not found",
-			"foo",
+			123,
 			nil,
 			false,
 		},
@@ -62,17 +62,17 @@ func TestSet(t *testing.T) {
 		sync.Mutex{},
 		2,
 		LRU,
-		map[string]cache.Cache{},
+		map[uint64][]byte{},
 	}
 
 	tests := []struct {
 		name  string
-		key   string
+		key   uint64
 		cache cache.Cache
 	}{
 		{
 			"sets a response cache",
-			"first",
+			1,
 			cache.Cache{
 				Value:      []byte("value 1"),
 				Expiration: time.Now().Add(1 * time.Minute),
@@ -80,7 +80,7 @@ func TestSet(t *testing.T) {
 		},
 		{
 			"sets a response cache",
-			"second",
+			2,
 			cache.Cache{
 				Value:      []byte("value 2"),
 				Expiration: time.Now().Add(1 * time.Minute),
@@ -88,7 +88,7 @@ func TestSet(t *testing.T) {
 		},
 		{
 			"sets a response cache",
-			"third",
+			3,
 			cache.Cache{
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(1 * time.Minute),
@@ -98,8 +98,8 @@ func TestSet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a.Set(tt.key, tt.cache)
-			if a.store[tt.key].Value == nil {
-				t.Errorf("memory.Set() error = store[%s] response is not %s", tt.key, tt.cache.Value)
+			if bytesToCache(a.store[tt.key]).Value == nil {
+				t.Errorf("memory.Set() error = store[%v] response is not %s", tt.key, tt.cache.Value)
 			}
 		})
 	}
@@ -110,37 +110,37 @@ func TestRelease(t *testing.T) {
 		sync.Mutex{},
 		2,
 		LRU,
-		map[string]cache.Cache{
-			"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
+		map[uint64][]byte{
+			14974843192121052621: cacheToBytes(cache.Cache{
 				Expiration: time.Now().Add(1 * time.Minute),
 				Value:      []byte("value 1"),
-			},
-			"48c169c22f6ae6351993050852982723": cache.Cache{
+			}),
+			14974839893586167988: cacheToBytes(cache.Cache{
 				Expiration: time.Now(),
 				Value:      []byte("value 2"),
-			},
-			"e7bc18936aeeee6fa96bd9410a3970f4": cache.Cache{
+			}),
+			14974840993097796199: cacheToBytes(cache.Cache{
 				Expiration: time.Now(),
 				Value:      []byte("value 3"),
-			},
+			}),
 		},
 	}
 
 	tests := []struct {
 		name        string
-		key         string
+		key         uint64
 		storeLength int
 		wantErr     bool
 	}{
 		{
 			"removes cached response from store",
-			"1e13f750b4d13e03a775f9d09032f87b",
+			14974843192121052621,
 			2,
 			false,
 		},
 		{
 			"removes cached response from store",
-			"48c169c22f6ae6351993050852982723",
+			14974839893586167988,
 			1,
 			false,
 		},
@@ -156,7 +156,8 @@ func TestRelease(t *testing.T) {
 }
 
 func TestEvict(t *testing.T) {
-	done := make(chan string, 1)
+	k := make(chan uint64, 1)
+
 	tests := []struct {
 		name      string
 		algorithm Algorithm
@@ -181,55 +182,116 @@ func TestEvict(t *testing.T) {
 	count := 0
 	for _, tt := range tests {
 		count++
+
 		a := &Adapter{
 			sync.Mutex{},
 			2,
 			tt.algorithm,
-			map[string]cache.Cache{
-				"1e13f750b4d13e03a775f9d09032f87b": cache.Cache{
+			map[uint64][]byte{
+				14974843192121052621: cacheToBytes(cache.Cache{
 					Value:      []byte("value 1"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-1 * time.Minute),
 					Frequency:  2,
-				},
-				"48c169c22f6ae6351993050852982723": cache.Cache{
+				}),
+				14974839893586167988: cacheToBytes(cache.Cache{
 					Value:      []byte("value 2"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-2 * time.Minute),
 					Frequency:  1,
-				},
-				"e7bc18936aeeee6fa96bd9410a3970f4": cache.Cache{
+				}),
+				14974840993097796199: cacheToBytes(cache.Cache{
 					Value:      []byte("value 3"),
 					Expiration: time.Now().Add(1 * time.Minute),
 					LastAccess: time.Now().Add(-3 * time.Minute),
 					Frequency:  3,
-				},
+				}),
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			a.evict(done)
-			key := <-done
+			a.evict(k)
+			key := <-k
+
 			if count == 1 {
-				if key != "e7bc18936aeeee6fa96bd9410a3970f4" {
+				if key != 14974840993097796199 {
 					t.Errorf("lru is not working properly")
 					return
 				}
 			} else if count == 2 {
-				if key != "1e13f750b4d13e03a775f9d09032f87b" {
+				if key != 14974843192121052621 {
 					t.Errorf("mru is not working properly")
 					return
 				}
 			} else if count == 3 {
-				if key != "48c169c22f6ae6351993050852982723" {
+				if key != 14974839893586167988 {
 					t.Errorf("lfu is not working properly")
 					return
 				}
 			} else {
 				if count == 4 {
-					if key != "e7bc18936aeeee6fa96bd9410a3970f4" {
+					if key != 14974840993097796199 {
 						t.Errorf("mfu is not working properly")
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestBytesToCache(t *testing.T) {
+	c := cache.Cache{
+		Value:      []byte("value 1"),
+		Expiration: time.Time{},
+		Frequency:  0,
+		LastAccess: time.Time{},
+	}
+
+	tests := []struct {
+		name      string
+		b         []byte
+		wantValue string
+	}{
+
+		{
+			"convert byte array to cache",
+			cacheToBytes(c),
+			"value 1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bytesToCache(tt.b)
+			if string(got.Value) != tt.wantValue {
+				t.Errorf("bytesToCache() Value = %v, want %v", got, tt.wantValue)
+				return
+			}
+		})
+	}
+}
+
+func TestCacheToBytes(t *testing.T) {
+	c := cache.Cache{
+		Value:      nil,
+		Expiration: time.Time{},
+		Frequency:  0,
+		LastAccess: time.Time{},
+	}
+
+	tests := []struct {
+		name  string
+		cache cache.Cache
+	}{
+		{
+			"convert cache to byte array",
+			c,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := cacheToBytes(tt.cache)
+			if b == nil || len(b) == 0 {
+				t.Error("cacheToBytes() failed to convert")
+				return
 			}
 		})
 	}
@@ -252,7 +314,7 @@ func TestNewAdapter(t *testing.T) {
 				sync.Mutex{},
 				4,
 				LRU,
-				map[string]cache.Cache{},
+				map[uint64][]byte{},
 			},
 			false,
 		},

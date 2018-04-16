@@ -12,10 +12,10 @@ import (
 
 type adapterMock struct {
 	sync.Mutex
-	store map[string]Cache
+	store map[uint64]Cache
 }
 
-func (a *adapterMock) Get(key string) (Cache, bool) {
+func (a *adapterMock) Get(key uint64) (Cache, bool) {
 	a.Lock()
 	defer a.Unlock()
 	if _, ok := a.store[key]; ok {
@@ -24,13 +24,13 @@ func (a *adapterMock) Get(key string) (Cache, bool) {
 	return Cache{}, false
 }
 
-func (a *adapterMock) Set(key string, cache Cache) {
+func (a *adapterMock) Set(key uint64, cache Cache) {
 	a.Lock()
 	defer a.Unlock()
 	a.store[key] = cache
 }
 
-func (a *adapterMock) Release(key string) {
+func (a *adapterMock) Release(key uint64) {
 	a.Lock()
 	defer a.Unlock()
 	delete(a.store, key)
@@ -42,16 +42,16 @@ func TestMiddleware(t *testing.T) {
 	})
 
 	adapter := &adapterMock{
-		store: map[string]Cache{
-			"1e13f750b4d13e03a775f9d09032f87b": Cache{
+		store: map[uint64]Cache{
+			14974843192121052621: Cache{
 				Value:      []byte("value 1"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			},
-			"48c169c22f6ae6351993050852982723": Cache{
+			14974839893586167988: Cache{
 				Value:      []byte("value 2"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			},
-			"e7bc18936aeeee6fa96bd9410a3970f4": Cache{
+			14974840993097796199: Cache{
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(-1 * time.Minute),
 			},
@@ -98,7 +98,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			"cache expired",
-			"http://foo.bar/test-4",
+			"http://foo.bar/test-3",
 			"new value",
 			200,
 		},
@@ -165,17 +165,22 @@ func TestGenerateKey(t *testing.T) {
 	tests := []struct {
 		name string
 		URL  string
-		want string
+		want uint64
 	}{
 		{
 			"get url checksum",
 			"http://foo.bar/test-1",
-			"1e13f750b4d13e03a775f9d09032f87b",
+			14974843192121052621,
 		},
 		{
 			"get url 2 checksum",
 			"http://foo.bar/test-2",
-			"48c169c22f6ae6351993050852982723",
+			14974839893586167988,
+		},
+		{
+			"get url 3 checksum",
+			"http://foo.bar/test-3",
+			14974840993097796199,
 		},
 	}
 	for _, tt := range tests {

@@ -18,12 +18,12 @@ type Adapter struct {
 }
 
 // Get implements the cache Adapter interface Get method.
-func (a *Adapter) Get(key string) (cache.Cache, bool) {
+func (a *Adapter) Get(key uint64) (cache.Cache, bool) {
 	a.Lock()
 	defer a.Unlock()
 
 	var c cache.Cache
-	if err := a.store.Get(key, &c); err == nil {
+	if err := a.store.Get(string(key), &c); err == nil {
 		return c, true
 	}
 
@@ -31,23 +31,23 @@ func (a *Adapter) Get(key string) (cache.Cache, bool) {
 }
 
 // Set implements the cache Adapter interface Set method.
-func (a *Adapter) Set(key string, cache cache.Cache) {
+func (a *Adapter) Set(key uint64, cache cache.Cache) {
 	a.Lock()
 	defer a.Unlock()
 	fmt.Println(cache.Expiration.Sub(time.Now()))
 	a.store.Set(&redisCache.Item{
-		Key:        key,
+		Key:        string(key),
 		Object:     cache,
 		Expiration: cache.Expiration.Sub(time.Now()),
 	})
 }
 
 // Release implements the cache Adapter interface Release method.
-func (a *Adapter) Release(key string) {
+func (a *Adapter) Release(key uint64) {
 	a.Lock()
 	defer a.Unlock()
 
-	a.store.Delete(key)
+	a.store.Delete(string(key))
 }
 
 // NewAdapter initializes Redis adapter.
