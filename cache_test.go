@@ -24,10 +24,10 @@ func (a *adapterMock) Get(key uint64) ([]byte, bool) {
 	return nil, false
 }
 
-func (a *adapterMock) Set(key uint64, cache []byte, expiration time.Time) {
+func (a *adapterMock) Set(key uint64, response []byte, expiration time.Time) {
 	a.Lock()
 	defer a.Unlock()
-	a.store[key] = cache
+	a.store[key] = response
 }
 
 func (a *adapterMock) Release(key uint64) {
@@ -43,15 +43,15 @@ func TestMiddleware(t *testing.T) {
 
 	adapter := &adapterMock{
 		store: map[uint64][]byte{
-			14974843192121052621: Cache{
+			14974843192121052621: Response{
 				Value:      []byte("value 1"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
-			14974839893586167988: Cache{
+			14974839893586167988: Response{
 				Value:      []byte("value 2"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
-			14974840993097796199: Cache{
+			14974840993097796199: Response{
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(-1 * time.Minute),
 			}.Bytes(),
@@ -137,8 +137,8 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
-func TestBytesToCache(t *testing.T) {
-	c := Cache{
+func TestBytesToResponse(t *testing.T) {
+	r := Response{
 		Value:      []byte("value 1"),
 		Expiration: time.Time{},
 		Frequency:  0,
@@ -152,24 +152,24 @@ func TestBytesToCache(t *testing.T) {
 	}{
 
 		{
-			"convert byte array to cache",
-			c.Bytes(),
+			"convert bytes array to response",
+			r.Bytes(),
 			"value 1",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BytesToCache(tt.b)
+			got := BytesToResponse(tt.b)
 			if string(got.Value) != tt.wantValue {
-				t.Errorf("BytesToCache() Value = %v, want %v", got, tt.wantValue)
+				t.Errorf("BytesToResponse() Value = %v, want %v", got, tt.wantValue)
 				return
 			}
 		})
 	}
 }
 
-func TestCacheToBytes(t *testing.T) {
-	c := Cache{
+func TestResponseToBytes(t *testing.T) {
+	r := Response{
 		Value:      nil,
 		Expiration: time.Time{},
 		Frequency:  0,
@@ -177,17 +177,17 @@ func TestCacheToBytes(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		cache Cache
+		name     string
+		response Response
 	}{
 		{
-			"convert cache to byte array",
-			c,
+			"convert response to bytes array",
+			r,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := tt.cache.Bytes()
+			b := tt.response.Bytes()
 			if b == nil || len(b) == 0 {
 				t.Error("Bytes() failed to convert")
 				return

@@ -56,7 +56,7 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 }
 
 // Set implements the cache Adapter interface Set method.
-func (a *Adapter) Set(key uint64, cache []byte, expiration time.Time) {
+func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.Lock()
 	defer a.Unlock()
 
@@ -66,7 +66,7 @@ func (a *Adapter) Set(key uint64, cache []byte, expiration time.Time) {
 		a.Release(<-k)
 	}
 
-	a.store[key] = cache
+	a.store[key] = response
 }
 
 // Release implements the Adapter interface Release method.
@@ -88,28 +88,28 @@ func (a *Adapter) evict(key chan uint64) {
 	}
 
 	for k, v := range a.store {
-		c := cache.BytesToCache(v)
+		r := cache.BytesToResponse(v)
 		switch a.algorithm {
 		case LRU:
-			if c.LastAccess.Before(lastAccess) {
+			if r.LastAccess.Before(lastAccess) {
 				selectedKey = k
-				lastAccess = c.LastAccess
+				lastAccess = r.LastAccess
 			}
 		case MRU:
-			if c.LastAccess.After(lastAccess) ||
-				c.LastAccess.Equal(lastAccess) {
+			if r.LastAccess.After(lastAccess) ||
+				r.LastAccess.Equal(lastAccess) {
 				selectedKey = k
-				lastAccess = c.LastAccess
+				lastAccess = r.LastAccess
 			}
 		case LFU:
-			if c.Frequency < frequency {
+			if r.Frequency < frequency {
 				selectedKey = k
-				frequency = c.Frequency
+				frequency = r.Frequency
 			}
 		case MFU:
-			if c.Frequency >= frequency {
+			if r.Frequency >= frequency {
 				selectedKey = k
-				frequency = c.Frequency
+				frequency = r.Frequency
 			}
 		}
 	}

@@ -18,14 +18,14 @@ func TestSet(t *testing.T) {
 	})
 
 	tests := []struct {
-		name  string
-		key   uint64
-		cache []byte
+		name     string
+		key      uint64
+		response []byte
 	}{
 		{
 			"sets a response cache",
 			1,
-			cache.Cache{
+			cache.Response{
 				Value:      []byte("value 1"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
@@ -33,7 +33,7 @@ func TestSet(t *testing.T) {
 		{
 			"sets a response cache",
 			2,
-			cache.Cache{
+			cache.Response{
 				Value:      []byte("value 2"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
@@ -41,7 +41,7 @@ func TestSet(t *testing.T) {
 		{
 			"sets a response cache",
 			3,
-			cache.Cache{
+			cache.Response{
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
@@ -49,7 +49,7 @@ func TestSet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a.Set(tt.key, tt.cache, time.Now().Add(1*time.Minute))
+			a.Set(tt.key, tt.response, time.Now().Add(1*time.Minute))
 		})
 	}
 }
@@ -87,7 +87,7 @@ func TestGet(t *testing.T) {
 				t.Errorf("memory.Get() ok = %v, tt.ok %v", ok, tt.ok)
 				return
 			}
-			got := cache.BytesToCache(b).Value
+			got := cache.BytesToResponse(b).Value
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("memory.Get() = %v, want %v", string(got), string(tt.want))
 			}

@@ -36,8 +36,8 @@ import (
 	"time"
 )
 
-// Cache is the cache data structure.
-type Cache struct {
+// Response is the cached response data structure.
+type Response struct {
 	// Value is the cached response value.
 	Value []byte
 
@@ -81,7 +81,7 @@ type Adapter interface {
 	Get(key uint64) ([]byte, bool)
 
 	// Set caches a response for a given key until an expiration date.
-	Set(key uint64, cache []byte, expiration time.Time)
+	Set(key uint64, response []byte, expiration time.Time)
 
 	// Release frees cache for a given key.
 	Release(key uint64)
@@ -103,15 +103,15 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			c.adapter.Release(key)
 		} else {
 			b, ok := c.adapter.Get(key)
-			cache := BytesToCache(b)
+			response := BytesToResponse(b)
 			if ok {
-				if cache.Expiration.After(time.Now()) {
-					cache.LastAccess = time.Now()
-					cache.Frequency++
-					c.adapter.Set(key, cache.Bytes(), cache.Expiration)
+				if response.Expiration.After(time.Now()) {
+					response.LastAccess = time.Now()
+					response.Frequency++
+					c.adapter.Set(key, response.Bytes(), response.Expiration)
 
 					w.WriteHeader(http.StatusFound)
-					w.Write(cache.Value)
+					w.Write(response.Value)
 					return
 				}
 
@@ -127,13 +127,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			now := time.Now()
 			value := rec.Body.Bytes()
 
-			cache := Cache{
+			response := Response{
 				Value:      value,
 				Expiration: now.Add(c.ttl),
 				LastAccess: now,
 				Frequency:  1,
 			}
-			c.adapter.Set(key, cache.Bytes(), cache.Expiration)
+			c.adapter.Set(key, response.Bytes(), response.Expiration)
 
 			w.WriteHeader(statusCode)
 			w.Write(value)
@@ -141,20 +141,20 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// BytesToCache converts byte array into Cache data structure.
-func BytesToCache(b []byte) Cache {
-	var c Cache
+// BytesToResponse converts bytes array into Response data structure.
+func BytesToResponse(b []byte) Response {
+	var r Response
 	dec := gob.NewDecoder(bytes.NewReader(b))
-	dec.Decode(&c)
+	dec.Decode(&r)
 
-	return c
+	return r
 }
 
-// Bytes converts Cache data structure into byte array.
-func (cache Cache) Bytes() []byte {
+// Bytes converts Response data structure into bytes array.
+func (r Response) Bytes() []byte {
 	var b bytes.Buffer
 	enc := gob.NewEncoder(&b)
-	enc.Encode(&cache)
+	enc.Encode(&r)
 
 	return b.Bytes()
 }
