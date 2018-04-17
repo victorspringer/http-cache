@@ -90,53 +90,55 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sortURLParams(r.URL)
-		key := generateKey(r.URL.String())
+		if r.Method == "GET" || r.Method == "" {
+			sortURLParams(r.URL)
+			key := generateKey(r.URL.String())
 
-		params := r.URL.Query()
-		if _, ok := params[c.releaseKey]; ok {
-			delete(params, c.releaseKey)
+			params := r.URL.Query()
+			if _, ok := params[c.releaseKey]; ok {
+				delete(params, c.releaseKey)
 
-			r.URL.RawQuery = params.Encode()
-			key = generateKey(r.URL.String())
-
-			c.adapter.Release(key)
-		} else {
-			b, ok := c.adapter.Get(key)
-			response := BytesToResponse(b)
-			if ok {
-				if response.Expiration.After(time.Now()) {
-					response.LastAccess = time.Now()
-					response.Frequency++
-					c.adapter.Set(key, response.Bytes(), response.Expiration)
-
-					w.WriteHeader(http.StatusFound)
-					w.Write(response.Value)
-					return
-				}
+				r.URL.RawQuery = params.Encode()
+				key = generateKey(r.URL.String())
 
 				c.adapter.Release(key)
+			} else {
+				b, ok := c.adapter.Get(key)
+				response := BytesToResponse(b)
+				if ok {
+					if response.Expiration.After(time.Now()) {
+						response.LastAccess = time.Now()
+						response.Frequency++
+						c.adapter.Set(key, response.Bytes(), response.Expiration)
+
+						w.WriteHeader(http.StatusFound)
+						w.Write(response.Value)
+						return
+					}
+
+					c.adapter.Release(key)
+				}
 			}
-		}
 
-		rec := httptest.NewRecorder()
-		next.ServeHTTP(rec, r)
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
 
-		statusCode := rec.Result().StatusCode
-		if statusCode < 400 {
-			now := time.Now()
-			value := rec.Body.Bytes()
+			statusCode := rec.Result().StatusCode
+			if statusCode < 400 {
+				now := time.Now()
+				value := rec.Body.Bytes()
 
-			response := Response{
-				Value:      value,
-				Expiration: now.Add(c.ttl),
-				LastAccess: now,
-				Frequency:  1,
+				response := Response{
+					Value:      value,
+					Expiration: now.Add(c.ttl),
+					LastAccess: now,
+					Frequency:  1,
+				}
+				c.adapter.Set(key, response.Bytes(), response.Expiration)
+
+				w.WriteHeader(statusCode)
+				w.Write(value)
 			}
-			c.adapter.Set(key, response.Bytes(), response.Expiration)
-
-			w.WriteHeader(statusCode)
-			w.Write(value)
 		}
 	})
 }
