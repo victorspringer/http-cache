@@ -121,7 +121,7 @@ cache=bigcache go run benchmark_gc_overhead.go
 Number of entries:  20000000
 GC pause for bigcache:  11.643352ms
 ```
-There is not much difference in GC pause time, as http-cache takes less than 1ms longer.
+There is not much difference in GC pause time, as http-cache memory adapter takes less than 1ms longer.
 
 ## Roadmap
 - Develop DynamoDB adapter
