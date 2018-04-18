@@ -96,16 +96,16 @@ The results are shown below:
 cd benchmark
 go test -bench=. -benchtime=10s ./... -timeout 30m
 
-BenchmarkHTTPCacheMamoryAdapterSet-4             2000000               700 ns/op             242 B/op          1 allocs/op
-BenchmarkBigCacheSet-4                           3000000	       550 ns/op	     535 B/op	       1 allocs/op
-BenchmarkHTTPCacheMamoryAdapterGet-4            20000000	       158 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBigCacheGet-4                           3000000	       343 ns/op	     120 B/op	       3 allocs/op
-BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000	       277 ns/op	     112 B/op	       1 allocs/op
-BenchmarkBigCacheSetParallel-4                  10000000	       267 ns/op	     533 B/op	       1 allocs/op
-BenchmarkHTTPCacheMemoryAdapterGetParallel-4    50000000	       56.1 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBigCacheGetParallel-4                  10000000	       137 ns/op	     120 B/op	       3 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSet-4             2000000     700 ns/op    242 B/op    1 allocs/op
+BenchmarkBigCacheSet-4                           3000000     550 ns/op    535 B/op    1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterGet-4            20000000     158 ns/op      0 B/op    0 allocs/op
+BenchmarkBigCacheGet-4                           3000000     343 ns/op    120 B/op    3 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000     277 ns/op    112 B/op    1 allocs/op
+BenchmarkBigCacheSetParallel-4                  10000000     267 ns/op    533 B/op    1 allocs/op
+BenchmarkHTTPCacheMemoryAdapterGetParallel-4    50000000    56.1 ns/op      0 B/op    0 allocs/op
+BenchmarkBigCacheGetParallel-4                  10000000     137 ns/op    120 B/op    3 allocs/op
 ```
-Writes in http-cache are a little bit slower. Reads are much more faster than in bigcache.
+Writes in http-cache are a little bit slower. Reads are much more faster than in BigCache.
 
 ### Garbage Collection Pause Time
 ```bash
@@ -129,3 +129,6 @@ There is not much difference in GC pause time, as http-cache takes less than 1ms
 - [http-cache](https://godoc.org/github.com/victorspringer/http-cache)
 - [Memory adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/memory)
 - [Redis adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/redis)
+
+## License
+http-cache is released under the MIT License.
