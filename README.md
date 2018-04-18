@@ -5,6 +5,8 @@ This is a HTTP middleware for server-side application layer caching, ideal for G
 
 It is simple, super fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc).
 
+The memory adapter minimizes GC overhead to near zero and supports some options of caching algorithms (LRU, MRU, LFU, MFU). This way, it is able to store plenty of gigabytes of responses, keeping great performance and being free of leaks.
+
 ## Getting Started
 
 ### Installation
