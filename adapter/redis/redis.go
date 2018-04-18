@@ -21,9 +21,6 @@ type RingOptions redis.RingOptions
 
 // Get implements the cache Adapter interface Get method.
 func (a *Adapter) Get(key uint64) ([]byte, bool) {
-	a.Lock()
-	defer a.Unlock()
-
 	var c []byte
 	if err := a.store.Get(string(key), &c); err == nil {
 		return c, true
