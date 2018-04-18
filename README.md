@@ -3,7 +3,7 @@
 
 This is a HTTP middleware for server-side application layer caching, ideal for Golang REST APIs.
 
-It is simple, fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc).
+It is simple, super fast, thread safe and gives the possibility to choose the adapter (memory, Redis, DynamoDB etc).
 
 ## Getting Started
 
@@ -86,8 +86,42 @@ import (
 ...
 ```
 
+## Benchmarks
+The benchmarks were based on [allegro/bigache](https://github.com/allegro/bigcache) tests and used to compare it with the http-cache memory adapter.<br>
+The tests were run using an Intel i5-2410M with 8GB RAM on Arch Linux 64bits.<br>
+The results are shown below:
+
+### Writes and Reads
+```bash
+cd benchmark
+go test -bench=. -benchtime=10s ./... -timeout 30m
+
+BenchmarkHTTPCacheMamoryAdapterSet-4             2000000               700 ns/op             242 B/op          1 allocs/op
+BenchmarkBigCacheSet-4                           3000000	       550 ns/op	     535 B/op	       1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterGet-4            20000000	       158 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBigCacheGet-4                           3000000	       343 ns/op	     120 B/op	       3 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000	       277 ns/op	     112 B/op	       1 allocs/op
+BenchmarkBigCacheSetParallel-4                  10000000	       267 ns/op	     533 B/op	       1 allocs/op
+BenchmarkHTTPCacheMemoryAdapterGetParallel-4    50000000	       56.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBigCacheGetParallel-4                  10000000	       137 ns/op	     120 B/op	       3 allocs/op
+```
+Writes in http-cache are a little bit slower. Reads are much more faster than in bigcache.
+
+### Garbage Collection Pause Time
+```bash
+cache=http_cache go run benchmark_gc_overhead.go
+
+Number of entries:  20000000
+GC pause for http-cache memory adapter:  12.395315ms
+
+cache=bigcache go run benchmark_gc_overhead.go
+
+Number of entries:  20000000
+GC pause for bigcache:  11.643352ms
+```
+There is not much difference in GC pause time, as http-cache takes less than 1ms longer.
+
 ## Roadmap
-- Benchmarks
 - Develop DynamoDB adapter
 - Develop MongoDB adapter
 
