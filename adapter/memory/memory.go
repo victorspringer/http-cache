@@ -45,11 +45,8 @@ type Adapter struct {
 
 // Get implements the cache Adapter interface Get method.
 func (a *Adapter) Get(key uint64) ([]byte, bool) {
-	a.Lock()
-	defer a.Unlock()
-
-	if cache, ok := a.store[key]; ok {
-		return cache, true
+	if response, ok := a.store[key]; ok {
+		return response, true
 	}
 
 	return nil, false
@@ -57,21 +54,22 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
-	a.Lock()
-	defer a.Unlock()
-
 	if len(a.store) == a.capacity {
 		k := make(chan uint64, 1)
 		go a.evict(k)
 		a.Release(<-k)
 	}
 
+	a.Lock()
+	defer a.Unlock()
 	a.store[key] = response
 }
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
 	if _, ok := a.store[key]; ok {
+		a.Lock()
+		defer a.Unlock()
 		delete(a.store, key)
 	}
 }
