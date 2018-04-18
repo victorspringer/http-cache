@@ -1,5 +1,8 @@
 comparison:
-	go test -benchmem -bench=. -benchtime=10s ./... -timeout 30m
+	go test -bench=. -benchtime=10s ./... -timeout 30m
 
-gc_pause_comparison:
-	go run benchmark_gc_pause_comparison.go
+gc_overhead_http_cache:
+	cache=http_cache go run benchmark_gc_overhead.go
+
+gc_overhead_bigcache:
+	cache=bigcache go run benchmark_gc_overhead.go

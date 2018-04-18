@@ -2,21 +2,14 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"time"
 
 	"github.com/allegro/bigcache"
-	"github.com/coocood/freecache"
 	"github.com/victorspringer/http-cache/adapter/memory"
 )
-
-func gcPause() time.Duration {
-	runtime.GC()
-	var stats debug.GCStats
-	debug.ReadGCStats(&stats)
-	return stats.PauseTotal
-}
 
 const (
 	entries   = 20000000
@@ -27,6 +20,18 @@ func main() {
 	debug.SetGCPercent(10)
 	fmt.Println("Number of entries: ", entries)
 
+	c := os.Getenv("cache")
+	if c == "http_cache" {
+		benchmarkHTTPCacheMemoryAdapter()
+	} else if c == "bigcache" {
+		benchmarkBigCache()
+	} else {
+		fmt.Println("invalid cache")
+		os.Exit(1)
+	}
+}
+
+func benchmarkHTTPCacheMemoryAdapter() {
 	config := &memory.Config{
 		Algorithm: memory.LRU,
 		Capacity:  entries,
@@ -43,11 +48,11 @@ func main() {
 	checkFirstElementBool(cache.Get(uint64(firstKey)))
 
 	fmt.Println("GC pause for http-cache memory adapter: ", gcPause())
-	cache = nil
-	gcPause()
 
-	//------------------------------------------
+	os.Exit(0)
+}
 
+func benchmarkBigCache() {
 	bgConfig := bigcache.Config{
 		Shards:             256,
 		LifeWindow:         100 * time.Minute,
@@ -62,41 +67,12 @@ func main() {
 		bigcache.Set(string(key), val)
 	}
 
-	firstKey, _ = generateKeyValue(1, valueSize)
+	firstKey, _ := generateKeyValue(1, valueSize)
 	checkFirstElement(bigcache.Get(string(firstKey)))
 
 	fmt.Println("GC pause for bigcache: ", gcPause())
-	bigcache = nil
-	gcPause()
 
-	//------------------------------------------
-
-	freeCache := freecache.NewCache(entries * 200) //allocate entries * 200 bytes
-	for i := 0; i < entries; i++ {
-		key, val := generateKeyValue(i, valueSize)
-		if err := freeCache.Set([]byte(string(key)), val, 0); err != nil {
-			fmt.Println("Error in set: ", err.Error())
-		}
-	}
-
-	firstKey, _ = generateKeyValue(1, valueSize)
-	checkFirstElement(freeCache.Get([]byte(string(firstKey))))
-
-	if freeCache.OverwriteCount() != 0 {
-		fmt.Println("Overwritten: ", freeCache.OverwriteCount())
-	}
-	fmt.Println("GC pause for freecache: ", gcPause())
-	freeCache = nil
-	gcPause()
-
-	//------------------------------------------
-
-	mapCache := make(map[string][]byte)
-	for i := 0; i < entries; i++ {
-		key, val := generateKeyValue(i, valueSize)
-		mapCache[string(key)] = val
-	}
-	fmt.Println("GC pause for map: ", gcPause())
+	os.Exit(0)
 }
 
 func checkFirstElementBool(val []byte, ok bool) {
@@ -123,4 +99,11 @@ func generateKeyValue(index int, valSize int) (int, []byte) {
 	val := append(make([]byte, valSize-10), fixedNumber...)
 
 	return key, val
+}
+
+func gcPause() time.Duration {
+	runtime.GC()
+	var stats debug.GCStats
+	debug.ReadGCStats(&stats)
+	return stats.PauseTotal
 }
