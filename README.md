@@ -131,4 +131,4 @@ There is not much difference in GC pause time, as http-cache takes less than 1ms
 - [Redis adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/redis)
 
 ## License
-http-cache is released under the MIT License.
+http-cache is released under the [MIT License](https://github.com/victorspringer/http-cache/blob/master/LICENSE).
