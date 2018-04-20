@@ -95,7 +95,7 @@ The results are shown below:
 
 ### Writes and Reads
 ```bash
-cd benchmark
+cd adapter/memory/benchmark
 go test -bench=. -benchtime=10s ./... -timeout 30m
 
 BenchmarkHTTPCacheMamoryAdapterSet-4             3000000     428 ns/op    165 B/op    1 allocs/op
