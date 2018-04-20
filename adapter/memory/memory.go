@@ -85,16 +85,16 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	}
 
 	a.Lock()
-	defer a.Unlock()
 	a.store[key] = response
+	a.Unlock()
 }
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
 	if _, ok := a.store[key]; ok {
 		a.Lock()
-		defer a.Unlock()
 		delete(a.store, key)
+		a.Unlock()
 	}
 }
 
