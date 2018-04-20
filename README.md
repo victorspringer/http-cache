@@ -98,16 +98,16 @@ The results are shown below:
 cd adapter/memory/benchmark
 go test -bench=. -benchtime=10s ./... -timeout 30m
 
-BenchmarkHTTPCacheMamoryAdapterSet-4             3000000     428 ns/op    165 B/op    1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSet-4             5000000     343 ns/op    172 B/op    1 allocs/op
 BenchmarkBigCacheSet-4                           3000000     507 ns/op    535 B/op    1 allocs/op
 BenchmarkHTTPCacheMamoryAdapterGet-4            20000000     146 ns/op      0 B/op    0 allocs/op
 BenchmarkBigCacheGet-4                           3000000     343 ns/op    120 B/op    3 allocs/op
-BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000     321 ns/op    172 B/op    1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSetParallel-4    10000000     223 ns/op    172 B/op    1 allocs/op
 BenchmarkBigCacheSetParallel-4                  10000000     291 ns/op    661 B/op    1 allocs/op
 BenchmarkHTTPCacheMemoryAdapterGetParallel-4    50000000    56.1 ns/op      0 B/op    0 allocs/op
 BenchmarkBigCacheGetParallel-4                  10000000     163 ns/op    120 B/op    3 allocs/op
 ```
-http-cache single writes are a little bit faster and reads are much more faster. Parallel writes are slightly slower than BigCache's. 
+http-cache writes are slightly faster and reads are much more faster.
 
 ### Garbage Collection Pause Time
 ```bash
