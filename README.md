@@ -98,30 +98,30 @@ The results are shown below:
 cd benchmark
 go test -bench=. -benchtime=10s ./... -timeout 30m
 
-BenchmarkHTTPCacheMamoryAdapterSet-4             2000000     700 ns/op    242 B/op    1 allocs/op
-BenchmarkBigCacheSet-4                           3000000     550 ns/op    535 B/op    1 allocs/op
-BenchmarkHTTPCacheMamoryAdapterGet-4            20000000     158 ns/op      0 B/op    0 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSet-4             3000000     428 ns/op    165 B/op    1 allocs/op
+BenchmarkBigCacheSet-4                           3000000     507 ns/op    535 B/op    1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterGet-4            20000000     146 ns/op      0 B/op    0 allocs/op
 BenchmarkBigCacheGet-4                           3000000     343 ns/op    120 B/op    3 allocs/op
-BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000     277 ns/op    112 B/op    1 allocs/op
-BenchmarkBigCacheSetParallel-4                  10000000     267 ns/op    533 B/op    1 allocs/op
+BenchmarkHTTPCacheMamoryAdapterSetParallel-4     5000000     321 ns/op    172 B/op    1 allocs/op
+BenchmarkBigCacheSetParallel-4                  10000000     291 ns/op    661 B/op    1 allocs/op
 BenchmarkHTTPCacheMemoryAdapterGetParallel-4    50000000    56.1 ns/op      0 B/op    0 allocs/op
-BenchmarkBigCacheGetParallel-4                  10000000     137 ns/op    120 B/op    3 allocs/op
+BenchmarkBigCacheGetParallel-4                  10000000     163 ns/op    120 B/op    3 allocs/op
 ```
-Writes in http-cache are a little bit slower. Reads are much more faster than in BigCache.
+http-cache single writes are a little bit faster and reads are much more faster. Parallel writes are slightly slower than BigCache's. 
 
 ### Garbage Collection Pause Time
 ```bash
-cache=http_cache go run benchmark_gc_overhead.go
+cache=http-cache go run benchmark_gc_overhead.go
 
 Number of entries:  20000000
-GC pause for http-cache memory adapter:  12.395315ms
+GC pause for http-cache memory adapter:  2.445617ms
 
 cache=bigcache go run benchmark_gc_overhead.go
 
 Number of entries:  20000000
-GC pause for bigcache:  11.643352ms
+GC pause for bigcache:  7.43339ms
 ```
-There is not much difference in GC pause time, as http-cache memory adapter takes less than 1ms longer.
+http-cache memory adapter takes way less GC pause time, that means smaller GC overhead.
 
 ## Roadmap
 - Develop DynamoDB adapter
