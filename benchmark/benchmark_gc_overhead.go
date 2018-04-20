@@ -21,7 +21,7 @@ func main() {
 	fmt.Println("Number of entries: ", entries)
 
 	c := os.Getenv("cache")
-	if c == "http_cache" {
+	if c == "http-cache" {
 		benchmarkHTTPCacheMemoryAdapter()
 	} else if c == "bigcache" {
 		benchmarkBigCache()

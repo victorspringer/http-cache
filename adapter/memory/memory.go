@@ -153,6 +153,6 @@ func NewAdapter(cfg *Config) (cache.Adapter, error) {
 		sync.Mutex{},
 		cfg.Capacity,
 		cfg.Algorithm,
-		make(map[uint64][]byte),
+		make(map[uint64][]byte, cfg.Capacity),
 	}, nil
 }
