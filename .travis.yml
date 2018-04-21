@@ -3,16 +3,28 @@ sudo: required
 language: go
 
 go:
-  - 1.8
+  - 1.9
 
 services:
   - docker
 
-before_script:
+cache:
+  directories:
+    - $GOPATH/pkg/dep
+
+env:
+  - DEP_VERSION="0.4.1"
+
+before_install:
+  - curl -L -s http://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64 -o $GOPATH/bin/dep
+  - chmod +x $GOPATH/bin/dep
   - go get golang.org/x/tools/cmd/cover
   - go get github.com/mattn/goveralls
   - docker pull redis
   - docker run -it -d -p 6379:6379 redis
+
+install:
+  - dep ensure
 
 script:
   - go test -cover -race -v -covermode=atomic -coverprofile=coverage.out

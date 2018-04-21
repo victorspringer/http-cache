@@ -4,8 +4,8 @@
 
 [[constraint]]
   name = "github.com/go-redis/redis"
-  version = "6.10.2"
+  version = "^6.10.2"
 
 [[constraint]]
   name = "github.com/vmihailenco/msgpack"
-  version = "3.3.0"
+  version = "^3.3.0"
