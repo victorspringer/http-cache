@@ -76,13 +76,13 @@ func TestMiddleware(t *testing.T) {
 			"returns cached response",
 			"http://foo.bar/test-1",
 			"value 1",
-			302,
+			304,
 		},
 		{
 			"returns cached response",
 			"http://foo.bar/test-2",
 			"value 2",
-			302,
+			304,
 		},
 		{
 			"no cached response returns ok status",
@@ -94,7 +94,7 @@ func TestMiddleware(t *testing.T) {
 			"returns cached response",
 			"http://foo.bar/test-3?baz=zaz&zaz=baz",
 			"new value",
-			302,
+			304,
 		},
 		{
 			"cache expired",
@@ -112,7 +112,7 @@ func TestMiddleware(t *testing.T) {
 			"returns new cached response",
 			"http://foo.bar/test-2",
 			"new value",
-			302,
+			304,
 		},
 	}
 	for _, tt := range tests {
