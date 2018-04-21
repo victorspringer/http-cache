@@ -61,7 +61,7 @@ type Config struct {
 
 // Adapter is the memory adapter data structure.
 type Adapter struct {
-	sync.Mutex
+	mutex     sync.RWMutex
 	capacity  int
 	algorithm Algorithm
 	store     map[uint64][]byte
@@ -84,17 +84,17 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 		a.Release(<-k)
 	}
 
-	a.Lock()
+	a.mutex.Lock()
 	a.store[key] = response
-	a.Unlock()
+	a.mutex.Unlock()
 }
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
 	if _, ok := a.store[key]; ok {
-		a.Lock()
+		a.mutex.Lock()
 		delete(a.store, key)
-		a.Unlock()
+		a.mutex.Unlock()
 	}
 }
 
@@ -150,7 +150,7 @@ func NewAdapter(cfg *Config) (cache.Adapter, error) {
 	}
 
 	return &Adapter{
-		sync.Mutex{},
+		sync.RWMutex{},
 		cfg.Capacity,
 		cfg.Algorithm,
 		make(map[uint64][]byte, cfg.Capacity),

@@ -11,7 +11,7 @@ import (
 
 func TestGet(t *testing.T) {
 	a := &Adapter{
-		sync.Mutex{},
+		sync.RWMutex{},
 		2,
 		LRU,
 		map[uint64][]byte{
@@ -60,7 +60,7 @@ func TestGet(t *testing.T) {
 
 func TestSet(t *testing.T) {
 	a := &Adapter{
-		sync.Mutex{},
+		sync.RWMutex{},
 		2,
 		LRU,
 		make(map[uint64][]byte),
@@ -110,7 +110,7 @@ func TestSet(t *testing.T) {
 
 func TestRelease(t *testing.T) {
 	a := &Adapter{
-		sync.Mutex{},
+		sync.RWMutex{},
 		2,
 		LRU,
 		map[uint64][]byte{
@@ -187,7 +187,7 @@ func TestEvict(t *testing.T) {
 		count++
 
 		a := &Adapter{
-			sync.Mutex{},
+			sync.RWMutex{},
 			2,
 			tt.algorithm,
 			map[uint64][]byte{
@@ -255,7 +255,7 @@ func TestNewAdapter(t *testing.T) {
 				LRU,
 			},
 			&Adapter{
-				sync.Mutex{},
+				sync.RWMutex{},
 				4,
 				LRU,
 				make(map[uint64][]byte),
