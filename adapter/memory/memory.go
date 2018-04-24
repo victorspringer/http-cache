@@ -78,13 +78,14 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
+	a.mutex.Lock()
+
 	if len(a.store) == a.capacity {
 		k := make(chan uint64, 1)
 		go a.evict(k)
 		a.Release(<-k)
 	}
 
-	a.mutex.Lock()
 	a.store[key] = response
 	a.mutex.Unlock()
 }
