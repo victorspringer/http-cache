@@ -25,7 +25,6 @@ SOFTWARE.
 package redis
 
 import (
-	"sync"
 	"time"
 
 	redisCache "github.com/go-redis/cache"
@@ -36,7 +35,6 @@ import (
 
 // Adapter is the memory adapter data structure.
 type Adapter struct {
-	mutex sync.RWMutex
 	store *redisCache.Codec
 }
 
@@ -55,27 +53,22 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
-	a.mutex.Lock()
 	a.store.Set(&redisCache.Item{
 		Key:        string(key),
 		Object:     response,
 		Expiration: expiration.Sub(time.Now()),
 	})
-	a.mutex.Unlock()
 }
 
 // Release implements the cache Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
-	a.mutex.Lock()
 	a.store.Delete(string(key))
-	a.mutex.Unlock()
 }
 
 // NewAdapter initializes Redis adapter.
 func NewAdapter(opt *RingOptions) cache.Adapter {
 	ropt := redis.RingOptions(*opt)
 	return &Adapter{
-		sync.RWMutex{},
 		&redisCache.Codec{
 			Redis: redis.NewRing(&ropt),
 			Marshal: func(v interface{}) ([]byte, error) {
