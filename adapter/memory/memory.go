@@ -63,7 +63,11 @@ type AdapterOptions func(a *Adapter) error
 
 // Get implements the cache Adapter interface Get method.
 func (a *Adapter) Get(key uint64) ([]byte, bool) {
-	if response, ok := a.store[key]; ok {
+	a.mutex.RLock()
+	response, ok := a.store[key]
+	a.mutex.RUnlock()
+
+	if ok {
 		return response, true
 	}
 
@@ -72,25 +76,28 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
-	a.mutex.Lock()
+	a.mutex.RLock()
+	length := len(a.store)
+	a.mutex.RUnlock()
 
-	if len(a.store) > 0 && len(a.store) == a.capacity {
-		a.mutex.Unlock()
-
+	if length > 0 && length == a.capacity {
 		k := make(chan uint64, 1)
 		go a.evict(k)
 		a.Release(<-k)
-
-		a.mutex.Lock()
 	}
 
+	a.mutex.Lock()
 	a.store[key] = response
 	a.mutex.Unlock()
 }
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
-	if _, ok := a.store[key]; ok {
+	a.mutex.RLock()
+	_, ok := a.store[key]
+	a.mutex.RUnlock()
+
+	if ok {
 		a.mutex.Lock()
 		delete(a.store, key)
 		a.mutex.Unlock()
