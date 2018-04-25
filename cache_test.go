@@ -58,11 +58,11 @@ func TestMiddleware(t *testing.T) {
 		},
 	}
 
-	client, _ := NewClient(&Config{
-		Adapter:    adapter,
-		TTL:        1 * time.Minute,
-		ReleaseKey: "rk",
-	})
+	client, _ := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithRefreshKey("rk"),
+	)
 
 	handler := client.Middleware(httpTestHandler)
 
@@ -256,50 +256,60 @@ func TestNewClient(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		cfg     *Config
+		opts    []ClientOption
 		want    *Client
 		wantErr bool
 	}{
 		{
 			"returns new client",
-			&Config{
-				Adapter: adapter,
-				TTL:     1 * time.Millisecond,
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
 			},
 			&Client{
 				adapter:    adapter,
 				ttl:        1 * time.Millisecond,
-				releaseKey: "",
+				refreshKey: "",
 			},
 			false,
 		},
 		{
-			"returns new client with release key",
-			&Config{
-				Adapter:    adapter,
-				TTL:        1 * time.Millisecond,
-				ReleaseKey: "rk",
+			"returns new client with refresh key",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithRefreshKey("rk"),
 			},
 			&Client{
 				adapter:    adapter,
 				ttl:        1 * time.Millisecond,
-				releaseKey: "rk",
+				refreshKey: "rk",
 			},
 			false,
 		},
 		{
 			"returns error",
-			&Config{
-				Adapter: adapter,
+			[]ClientOption{
+				ClientWithAdapter(adapter),
 			},
 			nil,
 			true,
 		},
 		{
 			"returns error",
-			&Config{
-				TTL:        1 * time.Millisecond,
-				ReleaseKey: "rk",
+			[]ClientOption{
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithRefreshKey("rk"),
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(0),
+				ClientWithRefreshKey("rk"),
 			},
 			nil,
 			true,
@@ -307,7 +317,7 @@ func TestNewClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(tt.cfg)
+			got, err := NewClient(tt.opts...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
 				return

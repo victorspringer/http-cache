@@ -126,10 +126,10 @@ func initHTTPCacheMamoryAdapter(entries int) (cache.Adapter, time.Time) {
 	if entries < 2 {
 		entries = 2
 	}
-	adapter, _ := memory.NewAdapter(&memory.Config{
-		Capacity:  entries,
-		Algorithm: memory.LRU,
-	})
+	adapter, _ := memory.NewAdapter(
+		memory.AdapterWithCapacity(entries),
+		memory.AdapterWithAlgorithm(memory.LRU),
+	)
 
 	return adapter, time.Now().Add(1 * time.Minute)
 }

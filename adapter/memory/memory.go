@@ -26,6 +26,7 @@ package memory
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -49,16 +50,6 @@ const (
 	MFU Algorithm = "MFU"
 )
 
-// Config contains the memory adapter configuration parameters.
-type Config struct {
-	// Capacity is the maximum number of cached responses.
-	Capacity int
-
-	// Algorithm is the approach used to select a cached
-	// response to be evicted when the capacity is reached.
-	Algorithm Algorithm
-}
-
 // Adapter is the memory adapter data structure.
 type Adapter struct {
 	mutex     sync.RWMutex
@@ -66,6 +57,9 @@ type Adapter struct {
 	algorithm Algorithm
 	store     map[uint64][]byte
 }
+
+// AdapterOptions is used to set Adapter settings.
+type AdapterOptions func(a *Adapter) error
 
 // Get implements the cache Adapter interface Get method.
 func (a *Adapter) Get(key uint64) ([]byte, bool) {
@@ -80,10 +74,14 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.mutex.Lock()
 
-	if len(a.store) == a.capacity {
+	if len(a.store) > 0 && len(a.store) == a.capacity {
+		a.mutex.Unlock()
+
 		k := make(chan uint64, 1)
 		go a.evict(k)
 		a.Release(<-k)
+
+		a.mutex.Lock()
 	}
 
 	a.store[key] = response
@@ -141,19 +139,47 @@ func (a *Adapter) evict(key chan uint64) {
 }
 
 // NewAdapter initializes memory adapter.
-func NewAdapter(cfg *Config) (cache.Adapter, error) {
-	if cfg.Capacity <= 1 {
-		return nil, errors.New("memory adapter requires a capacity greater than one")
+func NewAdapter(opts ...AdapterOptions) (cache.Adapter, error) {
+	a := &Adapter{}
+
+	for _, opt := range opts {
+		if err := opt(a); err != nil {
+			return nil, err
+		}
 	}
 
-	if cfg.Algorithm == "" {
-		return nil, errors.New("memory adapter requires a caching algorithm")
+	if a.capacity <= 1 {
+		return nil, errors.New("memory adapter capacity is not set")
 	}
 
-	return &Adapter{
-		sync.RWMutex{},
-		cfg.Capacity,
-		cfg.Algorithm,
-		make(map[uint64][]byte, cfg.Capacity),
-	}, nil
+	if a.algorithm == "" {
+		return nil, errors.New("memory adapter caching algorithm is not set")
+	}
+
+	a.mutex = sync.RWMutex{}
+	a.store = make(map[uint64][]byte, a.capacity)
+
+	return a, nil
+}
+
+// AdapterWithAlgorithm sets the approach used to select a cached
+// response to be evicted when the capacity is reached.
+func AdapterWithAlgorithm(alg Algorithm) AdapterOptions {
+	return func(a *Adapter) error {
+		a.algorithm = alg
+		return nil
+	}
+}
+
+// AdapterWithCapacity sets the maximum number of cached responses.
+func AdapterWithCapacity(cap int) AdapterOptions {
+	return func(a *Adapter) error {
+		if cap <= 1 {
+			return fmt.Errorf("memory adapter requires a capacity greater than %v", cap)
+		}
+
+		a.capacity = cap
+
+		return nil
+	}
 }

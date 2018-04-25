@@ -244,15 +244,15 @@ func TestEvict(t *testing.T) {
 func TestNewAdapter(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     *Config
+		opts    []AdapterOptions
 		want    cache.Adapter
 		wantErr bool
 	}{
 		{
 			"returns new Adapter",
-			&Config{
-				4,
-				LRU,
+			[]AdapterOptions{
+				AdapterWithCapacity(4),
+				AdapterWithAlgorithm(LRU),
 			},
 			&Adapter{
 				sync.RWMutex{},
@@ -264,16 +264,24 @@ func TestNewAdapter(t *testing.T) {
 		},
 		{
 			"returns error",
-			&Config{
-				Algorithm: LRU,
+			[]AdapterOptions{
+				AdapterWithAlgorithm(LRU),
 			},
 			nil,
 			true,
 		},
 		{
 			"returns error",
-			&Config{
-				Capacity: 4,
+			[]AdapterOptions{
+				AdapterWithCapacity(4),
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			[]AdapterOptions{
+				AdapterWithCapacity(1),
 			},
 			nil,
 			true,
@@ -281,7 +289,7 @@ func TestNewAdapter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewAdapter(tt.cfg)
+			got, err := NewAdapter(tt.opts...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewAdapter() error = %v, wantErr %v", err, tt.wantErr)
 				return

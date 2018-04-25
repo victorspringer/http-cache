@@ -32,13 +32,13 @@ func main() {
 }
 
 func benchmarkHTTPCacheMemoryAdapter() {
-	config := &memory.Config{
-		Algorithm: memory.LRU,
-		Capacity:  entries,
-	}
 	expiration := time.Now().Add(1 * time.Minute)
 
-	cache, _ := memory.NewAdapter(config)
+	cache, _ := memory.NewAdapter(
+		memory.AdapterWithAlgorithm(memory.LRU),
+		memory.AdapterWithCapacity(entries),
+	)
+
 	for i := 0; i < entries; i++ {
 		key, val := generateKeyValue(i, valueSize)
 		cache.Set(uint64(key), val, expiration)
@@ -62,6 +62,7 @@ func benchmarkBigCache() {
 	}
 
 	bigcache, _ := bigcache.NewBigCache(bgConfig)
+
 	for i := 0; i < entries; i++ {
 		key, val := generateKeyValue(i, valueSize)
 		bigcache.Set(string(key), val)

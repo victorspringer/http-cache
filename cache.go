@@ -28,6 +28,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
@@ -53,26 +54,15 @@ type Response struct {
 	Frequency int
 }
 
-// Config contains the Client configuration parameters.
-// ReleaseKey is optional setting.
-type Config struct {
-	// Adapter type for the HTTP cache middleware client.
-	Adapter Adapter
-
-	// TTL is how long a response is going to be cached.
-	TTL time.Duration
-
-	// ReleaseKey is the parameter key used to free a request cached
-	// response. Optional setting.
-	ReleaseKey string
-}
-
 // Client data structure for HTTP cache middleware.
 type Client struct {
 	adapter    Adapter
 	ttl        time.Duration
-	releaseKey string
+	refreshKey string
 }
+
+// ClientOption is used to set Client settings.
+type ClientOption func(c *Client) error
 
 // Adapter interface for HTTP cache middleware client.
 type Adapter interface {
@@ -95,8 +85,8 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			key := generateKey(r.URL.String())
 
 			params := r.URL.Query()
-			if _, ok := params[c.releaseKey]; ok {
-				delete(params, c.releaseKey)
+			if _, ok := params[c.refreshKey]; ok {
+				delete(params, c.refreshKey)
 
 				r.URL.RawQuery = params.Encode()
 				key = generateKey(r.URL.String())
@@ -178,22 +168,54 @@ func generateKey(URL string) uint64 {
 	return hash.Sum64()
 }
 
-// NewClient initializes the cache HTTP middleware client with a given
-// configuration.
-func NewClient(cfg *Config) (*Client, error) {
-	if cfg.Adapter == nil {
-		return nil, errors.New("cache client requires an adapter")
+// NewClient initializes the cache HTTP middleware client with the given
+// options.
+func NewClient(opts ...ClientOption) (*Client, error) {
+	c := &Client{}
+
+	for _, opt := range opts {
+		if err := opt(c); err != nil {
+			return nil, err
+		}
 	}
 
-	if int64(cfg.TTL) < 1 {
-		return nil, errors.New("cache client requires a valid ttl")
+	if c.adapter == nil {
+		return nil, errors.New("cache client adapter is not set")
 	}
-
-	c := &Client{
-		adapter:    cfg.Adapter,
-		ttl:        cfg.TTL,
-		releaseKey: cfg.ReleaseKey,
+	if int64(c.ttl) < 1 {
+		return nil, errors.New("cache client ttl is not set")
 	}
 
 	return c, nil
+}
+
+// ClientWithAdapter sets the adapter type for the HTTP cache
+// middleware client.
+func ClientWithAdapter(a Adapter) ClientOption {
+	return func(c *Client) error {
+		c.adapter = a
+		return nil
+	}
+}
+
+// ClientWithTTL sets how long each response is going to be cached.
+func ClientWithTTL(ttl time.Duration) ClientOption {
+	return func(c *Client) error {
+		if int64(ttl) < 1 {
+			return fmt.Errorf("cache client ttl %v is invalid", ttl)
+		}
+
+		c.ttl = ttl
+
+		return nil
+	}
+}
+
+// ClientWithRefreshKey sets the parameter key used to free a request
+// cached response. Optional setting.
+func ClientWithRefreshKey(refreshKey string) ClientOption {
+	return func(c *Client) error {
+		c.refreshKey = refreshKey
+		return nil
+	}
 }
