@@ -159,8 +159,6 @@ func TestRelease(t *testing.T) {
 }
 
 func TestEvict(t *testing.T) {
-	k := make(chan uint64, 1)
-
 	tests := []struct {
 		name      string
 		algorithm Algorithm
@@ -212,27 +210,26 @@ func TestEvict(t *testing.T) {
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			a.evict(k)
-			key := <-k
+			a.evict()
 
 			if count == 1 {
-				if key != 14974840993097796199 {
+				if _, ok := a.store[14974840993097796199]; ok {
 					t.Errorf("lru is not working properly")
 					return
 				}
 			} else if count == 2 {
-				if key != 14974843192121052621 {
+				if _, ok := a.store[14974843192121052621]; ok {
 					t.Errorf("mru is not working properly")
 					return
 				}
 			} else if count == 3 {
-				if key != 14974839893586167988 {
+				if _, ok := a.store[14974839893586167988]; ok {
 					t.Errorf("lfu is not working properly")
 					return
 				}
 			} else {
 				if count == 4 {
-					if key != 14974840993097796199 {
+					if _, ok := a.store[14974840993097796199]; ok {
 						t.Errorf("mfu is not working properly")
 					}
 				}

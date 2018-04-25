@@ -81,9 +81,7 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.mutex.RUnlock()
 
 	if length > 0 && length == a.capacity {
-		k := make(chan uint64, 1)
-		go a.evict(k)
-		a.Release(<-k)
+		a.evict()
 	}
 
 	a.mutex.Lock()
@@ -104,7 +102,7 @@ func (a *Adapter) Release(key uint64) {
 	}
 }
 
-func (a *Adapter) evict(key chan uint64) {
+func (a *Adapter) evict() {
 	selectedKey := uint64(0)
 	lastAccess := time.Now()
 	frequency := 9999999999999
@@ -142,7 +140,7 @@ func (a *Adapter) evict(key chan uint64) {
 		}
 	}
 
-	key <- selectedKey
+	a.Release(selectedKey)
 }
 
 // NewAdapter initializes memory adapter.
