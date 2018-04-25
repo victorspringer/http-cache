@@ -124,6 +124,10 @@ GC pause for bigcache:  7.43339ms
 http-cache memory adapter takes way less GC pause time, that means smaller GC overhead.
 
 ## Roadmap
+- Make it compliant with RFC7234
+- Add middleware configuration (cacheable status codes, request methods etc)
+- Develop gRPC middleware
+- Develop Badger adapter
 - Develop DynamoDB adapter
 - Develop MongoDB adapter
 
