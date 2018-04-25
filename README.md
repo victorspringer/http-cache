@@ -34,10 +34,8 @@ func example(w http.ResponseWriter, r *http.Request) {
 
 func main() {
     memcached, err := memory.NewAdapter(
-        &memory.Config{
-            Algorithm: memory.LRU,
-            Capacity:  10,
-        },
+        memory.AdapterWithAlgorithm(memory.LRU),
+        memory.AdapterWithCapacity(10000000),
     )
     if err != nil {
         fmt.Println(err)
@@ -45,11 +43,9 @@ func main() {
     }
 
     cacheClient, err := cache.NewClient(
-        &cache.Config{
-            Adapter:    memcached,
-            ReleaseKey: "opn",
-            TTL:        10 * time.Minute,
-        },
+        cache.ClientWithAdapter(memcached),
+        cache.ClientWithTTL(10 * time.Minute),
+        cache.ClientWithRefreshKey("opn"),
     )
     if err != nil {
         fmt.Println(err)
@@ -78,11 +74,9 @@ import (
         },
     }
     cacheClient := cache.NewClient(
-        &cache.Config{
-            Adapter:    redis.NewAdapter(ringOpt),
-            ReleaseKey: "opn",
-            TTL:        10 * time.Minute,
-        },
+        cache.ClientWithAdapter(redis.NewAdapter(ringOpt)),
+        cache.ClientWithTTL(10 * time.Minute),
+        cache.ClientWithRefreshKey("opn"),
     )
 
 ...
