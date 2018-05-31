@@ -101,7 +101,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
-						w.WriteHeader(http.StatusNotModified)
+						//w.WriteHeader(http.StatusNotModified)
 						w.Write(response.Value)
 						return
 					}
