@@ -129,7 +129,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				w.WriteHeader(statusCode)
 				w.Write(value)
 			}
+			return
 		}
+		next.ServeHTTP(w, r)
 	})
 }
 

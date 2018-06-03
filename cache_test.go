@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -37,8 +38,9 @@ func (a *adapterMock) Release(key uint64) {
 }
 
 func TestMiddleware(t *testing.T) {
+	counter := 0
 	httpTestHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("new value"))
+		w.Write([]byte(fmt.Sprintf("new value %v", counter)))
 	})
 
 	adapter := &adapterMock{
@@ -69,55 +71,72 @@ func TestMiddleware(t *testing.T) {
 	tests := []struct {
 		name     string
 		url      string
+		method   string
 		wantBody string
 		wantCode int
 	}{
 		{
 			"returns cached response",
 			"http://foo.bar/test-1",
+			"GET",
 			"value 1",
-			304,
+			200,
+		},
+		{
+			"returns new response",
+			"http://foo.bar/test-2",
+			"POST",
+			"new value 2",
+			200,
 		},
 		{
 			"returns cached response",
 			"http://foo.bar/test-2",
+			"GET",
 			"value 2",
-			304,
+			200,
 		},
 		{
-			"no cached response returns ok status",
+			"returns new response",
 			"http://foo.bar/test-3?zaz=baz&baz=zaz",
-			"new value",
+			"GET",
+			"new value 4",
 			200,
 		},
 		{
 			"returns cached response",
 			"http://foo.bar/test-3?baz=zaz&zaz=baz",
-			"new value",
-			304,
+			"GET",
+			"new value 4",
+			200,
 		},
 		{
 			"cache expired",
 			"http://foo.bar/test-3",
-			"new value",
+			"GET",
+			"new value 6",
 			200,
 		},
 		{
-			"releases cached response and returns ok status",
+			"releases cached response and returns new response",
 			"http://foo.bar/test-2?rk=true",
-			"new value",
+			"GET",
+			"new value 7",
 			200,
 		},
 		{
 			"returns new cached response",
 			"http://foo.bar/test-2",
-			"new value",
-			304,
+			"GET",
+			"new value 7",
+			200,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, err := http.NewRequest("GET", tt.url, nil)
+			counter++
+
+			r, err := http.NewRequest(tt.method, tt.url, nil)
 			if err != nil {
 				t.Error(err)
 				return
