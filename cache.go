@@ -114,9 +114,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(rec, r)
 
 			statusCode := rec.Result().StatusCode
+			value := rec.Body.Bytes()
 			if statusCode < 400 {
 				now := time.Now()
-				value := rec.Body.Bytes()
 
 				response := Response{
 					Value:      value,
@@ -125,10 +125,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					Frequency:  1,
 				}
 				c.adapter.Set(key, response.Bytes(), response.Expiration)
-
-				w.WriteHeader(statusCode)
-				w.Write(value)
 			}
+			w.WriteHeader(statusCode)
+			w.Write(value)
 			return
 		}
 		next.ServeHTTP(w, r)
