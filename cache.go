@@ -34,6 +34,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -112,8 +113,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
+			result := rec.Result()
 
-			statusCode := rec.Result().StatusCode
+			statusCode := result.StatusCode
 			value := rec.Body.Bytes()
 			if statusCode < 400 {
 				now := time.Now()
@@ -125,6 +127,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					Frequency:  1,
 				}
 				c.adapter.Set(key, response.Bytes(), response.Expiration)
+			}
+			for k, v := range result.Header {
+				w.Header().Set(k, strings.Join(v, ","))
 			}
 			w.WriteHeader(statusCode)
 			w.Write(value)
