@@ -43,6 +43,9 @@ type Response struct {
 	// Value is the cached response value.
 	Value []byte
 
+	// Header is the cached response header.
+	Header http.Header
+
 	// Expiration is the cached response expiration date.
 	Expiration time.Time
 
@@ -103,6 +106,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
 						//w.WriteHeader(http.StatusNotModified)
+						for k, v := range response.Header {
+							w.Header().Set(k, strings.Join(v, ","))
+						}
 						w.Write(response.Value)
 						return
 					}
@@ -122,6 +128,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 				response := Response{
 					Value:      value,
+					Header:     result.Header,
 					Expiration: now.Add(c.ttl),
 					LastAccess: now,
 					Frequency:  1,
