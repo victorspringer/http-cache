@@ -105,7 +105,7 @@ func (a *Adapter) Release(key uint64) {
 func (a *Adapter) evict() {
 	selectedKey := uint64(0)
 	lastAccess := time.Now()
-	frequency := 9999999999999
+	frequency := 2147483647
 
 	if a.algorithm == MRU {
 		lastAccess = time.Time{}
