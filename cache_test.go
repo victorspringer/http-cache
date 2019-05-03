@@ -239,6 +239,25 @@ func TestSortURLParams(t *testing.T) {
 	}
 }
 
+func TestGenerateKeyString(t *testing.T) {
+	urls := []string{
+		"http://localhost:8080/category",
+		"http://localhost:8080/category/morisco",
+		"http://localhost:8080/category/mourisquinho",
+	}
+
+	keys := make(map[string]string, len(urls))
+	for _, u := range urls {
+		rawKey := generateKey(u)
+		key := KeyAsString(rawKey)
+
+		if otherURL, found := keys[key]; found {
+			t.Fatalf("URLs %s and %s share the same key %s", u, otherURL, key)
+		}
+		keys[key] = u
+	}
+}
+
 func TestGenerateKey(t *testing.T) {
 	tests := []struct {
 		name string

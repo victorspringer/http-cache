@@ -34,6 +34,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -172,6 +173,11 @@ func sortURLParams(URL *url.URL) {
 		})
 	}
 	URL.RawQuery = params.Encode()
+}
+
+// KeyAsString can be used by adapters to convert the cache key from uint64 to string.
+func KeyAsString(key uint64) string {
+	return strconv.FormatUint(key, 36)
 }
 
 func generateKey(URL string) uint64 {
