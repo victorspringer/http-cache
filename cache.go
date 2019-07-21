@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -89,6 +90,15 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		if c.cacheableMethod(r.Method) {
 			sortURLParams(r.URL)
 			key := generateKey(r.URL.String())
+			if r.Method == http.MethodPost && r.Body != nil {
+				body, err := ioutil.ReadAll(r.Body)
+				defer r.Body.Close()
+				if err != nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+				key = generateKeyWithBody(r.URL.String(), body)
+			}
 
 			params := r.URL.Query()
 			if _, ok := params[c.refreshKey]; ok {
@@ -193,6 +203,14 @@ func KeyAsString(key uint64) string {
 func generateKey(URL string) uint64 {
 	hash := fnv.New64a()
 	hash.Write([]byte(URL))
+
+	return hash.Sum64()
+}
+
+func generateKeyWithBody(URL string, body []byte) uint64 {
+	hash := fnv.New64a()
+	body = append([]byte(URL), body...)
+	hash.Write(body)
 
 	return hash.Sum64()
 }

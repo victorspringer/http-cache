@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,8 @@ type adapterMock struct {
 	sync.Mutex
 	store map[uint64][]byte
 }
+
+type errReader int
 
 func (a *adapterMock) Get(key uint64) ([]byte, bool) {
 	a.Lock()
@@ -37,6 +41,10 @@ func (a *adapterMock) Release(key uint64) {
 	delete(a.store, key)
 }
 
+func (errReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("readAll error")
+}
+
 func TestMiddleware(t *testing.T) {
 	counter := 0
 	httpTestHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +65,10 @@ func TestMiddleware(t *testing.T) {
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(-1 * time.Minute),
 			}.Bytes(),
+			10956846073361780255: Response{
+				Value:      []byte("value 4"),
+				Expiration: time.Now().Add(-1 * time.Minute),
+			}.Bytes(),
 		},
 	}
 
@@ -64,6 +76,7 @@ func TestMiddleware(t *testing.T) {
 		ClientWithAdapter(adapter),
 		ClientWithTTL(1*time.Minute),
 		ClientWithRefreshKey("rk"),
+		ClientWithMethods([]string{http.MethodGet, http.MethodPost}),
 	)
 
 	handler := client.Middleware(httpTestHandler)
@@ -72,6 +85,7 @@ func TestMiddleware(t *testing.T) {
 		name     string
 		url      string
 		method   string
+		body     []byte
 		wantBody string
 		wantCode int
 	}{
@@ -79,13 +93,15 @@ func TestMiddleware(t *testing.T) {
 			"returns cached response",
 			"http://foo.bar/test-1",
 			"GET",
+			nil,
 			"value 1",
 			200,
 		},
 		{
 			"returns new response",
 			"http://foo.bar/test-2",
-			"POST",
+			"PUT",
+			nil,
 			"new value 2",
 			200,
 		},
@@ -93,6 +109,7 @@ func TestMiddleware(t *testing.T) {
 			"returns cached response",
 			"http://foo.bar/test-2",
 			"GET",
+			nil,
 			"value 2",
 			200,
 		},
@@ -100,6 +117,7 @@ func TestMiddleware(t *testing.T) {
 			"returns new response",
 			"http://foo.bar/test-3?zaz=baz&baz=zaz",
 			"GET",
+			nil,
 			"new value 4",
 			200,
 		},
@@ -107,6 +125,7 @@ func TestMiddleware(t *testing.T) {
 			"returns cached response",
 			"http://foo.bar/test-3?baz=zaz&zaz=baz",
 			"GET",
+			nil,
 			"new value 4",
 			200,
 		},
@@ -114,6 +133,7 @@ func TestMiddleware(t *testing.T) {
 			"cache expired",
 			"http://foo.bar/test-3",
 			"GET",
+			nil,
 			"new value 6",
 			200,
 		},
@@ -121,6 +141,7 @@ func TestMiddleware(t *testing.T) {
 			"releases cached response and returns new response",
 			"http://foo.bar/test-2?rk=true",
 			"GET",
+			nil,
 			"new value 7",
 			200,
 		},
@@ -128,18 +149,62 @@ func TestMiddleware(t *testing.T) {
 			"returns new cached response",
 			"http://foo.bar/test-2",
 			"GET",
+			nil,
 			"new value 7",
+			200,
+		},
+		{
+			"returns new cached response",
+			"http://foo.bar/test-2",
+			"POST",
+			[]byte(`{"foo": "bar"}`),
+			"new value 9",
+			200,
+		},
+		{
+			"returns new cached response",
+			"http://foo.bar/test-2",
+			"POST",
+			[]byte(`{"foo": "bar"}`),
+			"new value 9",
+			200,
+		},
+		{
+			"ignores request body",
+			"http://foo.bar/test-2",
+			"GET",
+			[]byte(`{"foo": "bar"}`),
+			"new value 7",
+			200,
+		},
+		{
+			"returns new response",
+			"http://foo.bar/test-2",
+			"POST",
+			[]byte(`{"foo": "bar"}`),
+			"new value 12",
 			200,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			counter++
+			var r *http.Request
+			var err error
 
-			r, err := http.NewRequest(tt.method, tt.url, nil)
-			if err != nil {
-				t.Error(err)
-				return
+			if counter != 12 {
+				reader := bytes.NewReader(tt.body)
+				r, err = http.NewRequest(tt.method, tt.url, reader)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			} else {
+				r, err = http.NewRequest(tt.method, tt.url, errReader(0))
+				if err != nil {
+					t.Error(err)
+					return
+				}
 			}
 
 			w := httptest.NewRecorder()
@@ -284,6 +349,41 @@ func TestGenerateKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := generateKey(tt.URL); got != tt.want {
 				t.Errorf("generateKey() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateKeyWithBody(t *testing.T) {
+	tests := []struct {
+		name string
+		URL  string
+		body []byte
+		want uint64
+	}{
+		{
+			"get POST checksum",
+			"http://foo.bar/test-1",
+			[]byte(`{"foo": "bar"}`),
+			16224051135567554746,
+		},
+		{
+			"get POST 2 checksum",
+			"http://foo.bar/test-1",
+			[]byte(`{"bar": "foo"}`),
+			3604153880186288164,
+		},
+		{
+			"get POST 3 checksum",
+			"http://foo.bar/test-2",
+			[]byte(`{"foo": "bar"}`),
+			10956846073361780255,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := generateKeyWithBody(tt.URL, tt.body); got != tt.want {
+				t.Errorf("generateKeyWithBody() = %v, want %v", got, tt.want)
 			}
 		})
 	}
