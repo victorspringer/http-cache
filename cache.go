@@ -97,7 +97,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
+				reader := ioutil.NopCloser(bytes.NewBuffer(body))
 				key = generateKeyWithBody(r.URL.String(), body)
+				r.Body = reader
 			}
 
 			params := r.URL.Query()
