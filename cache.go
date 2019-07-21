@@ -256,6 +256,11 @@ func ClientWithRefreshKey(refreshKey string) ClientOption {
 // Optional setting. If not set, default is "GET".
 func ClientWithMethods(methods []string) ClientOption {
 	return func(c *Client) error {
+		for _, method := range methods {
+			if method != http.MethodGet && method != http.MethodPost {
+				return fmt.Errorf("invalid method %s", method)
+			}
+		}
 		c.methods = methods
 		return nil
 	}

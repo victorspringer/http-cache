@@ -303,13 +303,13 @@ func TestNewClient(t *testing.T) {
 			[]ClientOption{
 				ClientWithAdapter(adapter),
 				ClientWithTTL(1 * time.Millisecond),
-				ClientWithMethods([]string{http.MethodGet}),
+				ClientWithMethods([]string{http.MethodGet, http.MethodPost}),
 			},
 			&Client{
 				adapter:    adapter,
 				ttl:        1 * time.Millisecond,
 				refreshKey: "",
-				methods:    []string{http.MethodGet},
+				methods:    []string{http.MethodGet, http.MethodPost},
 			},
 			false,
 		},
@@ -351,6 +351,16 @@ func TestNewClient(t *testing.T) {
 				ClientWithAdapter(adapter),
 				ClientWithTTL(0),
 				ClientWithRefreshKey("rk"),
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithMethods([]string{http.MethodGet, http.MethodPut}),
 			},
 			nil,
 			true,
