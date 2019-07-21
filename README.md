@@ -119,7 +119,7 @@ http-cache memory adapter takes way less GC pause time, that means smaller GC ov
 
 ## Roadmap
 - Make it compliant with RFC7234
-- Add middleware configuration (cacheable status codes, paths etc)
+- Add more middleware configuration (cacheable status codes, paths etc)
 - Develop gRPC middleware
 - Develop Badger adapter
 - Develop DynamoDB adapter
