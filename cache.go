@@ -64,6 +64,7 @@ type Client struct {
 	adapter    Adapter
 	ttl        time.Duration
 	refreshKey string
+	methods    []string
 }
 
 // ClientOption is used to set Client settings.
@@ -85,7 +86,7 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" || r.Method == "" {
+		if c.cacheableMethod(r.Method) {
 			sortURLParams(r.URL)
 			key := generateKey(r.URL.String())
 
@@ -147,6 +148,15 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+func (c *Client) cacheableMethod(method string) bool {
+	for _, m := range c.methods {
+		if method == m {
+			return true
+		}
+	}
+	return false
+}
+
 // BytesToResponse converts bytes array into Response data structure.
 func BytesToResponse(b []byte) Response {
 	var r Response
@@ -204,6 +214,9 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	if int64(c.ttl) < 1 {
 		return nil, errors.New("cache client ttl is not set")
 	}
+	if c.methods == nil {
+		c.methods = []string{http.MethodGet}
+	}
 
 	return c, nil
 }
@@ -235,6 +248,15 @@ func ClientWithTTL(ttl time.Duration) ClientOption {
 func ClientWithRefreshKey(refreshKey string) ClientOption {
 	return func(c *Client) error {
 		c.refreshKey = refreshKey
+		return nil
+	}
+}
+
+// ClientWithMethods sets the acceptable HTTP methods to be cached.
+// Optional setting. If not set, default is "GET".
+func ClientWithMethods(methods []string) ClientOption {
+	return func(c *Client) error {
+		c.methods = methods
 		return nil
 	}
 }
