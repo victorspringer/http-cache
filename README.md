@@ -46,6 +46,7 @@ func main() {
         cache.ClientWithAdapter(memcached),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
+        cache.ClientWithNonCachedHeaders([]string{"geo-country"}),
     )
     if err != nil {
         fmt.Println(err)

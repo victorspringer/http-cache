@@ -62,10 +62,11 @@ type Response struct {
 
 // Client data structure for HTTP cache middleware.
 type Client struct {
-	adapter    Adapter
-	ttl        time.Duration
-	refreshKey string
-	methods    []string
+	adapter             Adapter
+	ttl                 time.Duration
+	refreshKey          string
+	methods             []string
+	nonCacheableHeaders []string
 }
 
 // ClientOption is used to set Client settings.
@@ -89,7 +90,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c.cacheableMethod(r.Method) {
 			sortURLParams(r.URL)
-			key := generateKey(r.URL.String())
+			headerValues := extractHeaders(c.nonCacheableHeaders, r.Header)
+
+			key := generateKey(r.URL.String(), headerValues)
 			if r.Method == http.MethodPost && r.Body != nil {
 				body, err := ioutil.ReadAll(r.Body)
 				defer r.Body.Close()
@@ -98,7 +101,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					return
 				}
 				reader := ioutil.NopCloser(bytes.NewBuffer(body))
-				key = generateKeyWithBody(r.URL.String(), body)
+				key = generateKeyWithBody(r.URL.String(), headerValues, body)
 				r.Body = reader
 			}
 
@@ -107,7 +110,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				delete(params, c.refreshKey)
 
 				r.URL.RawQuery = params.Encode()
-				key = generateKey(r.URL.String())
+				key = generateKey(r.URL.String(), headerValues)
 
 				c.adapter.Release(key)
 			} else {
@@ -202,19 +205,47 @@ func KeyAsString(key uint64) string {
 	return strconv.FormatUint(key, 36)
 }
 
-func generateKey(URL string) uint64 {
+func generateKey(URL string, headerValues []string) uint64 {
+	buffer := bytes.Buffer{}
+	buffer.WriteString(URL)
+
+	for _, value := range headerValues {
+		buffer.WriteString(value)
+	}
+
 	hash := fnv.New64a()
-	hash.Write([]byte(URL))
+	hash.Write(buffer.Bytes())
 
 	return hash.Sum64()
 }
 
-func generateKeyWithBody(URL string, body []byte) uint64 {
+func generateKeyWithBody(URL string, headerValues []string, body []byte) uint64 {
+	buffer := bytes.Buffer{}
+	buffer.WriteString(URL)
+
+	for _, value := range headerValues {
+		buffer.WriteString(value)
+	}
+
+	buffer.Write(body)
+
 	hash := fnv.New64a()
-	body = append([]byte(URL), body...)
-	hash.Write(body)
+	hash.Write([]byte(buffer.String()))
 
 	return hash.Sum64()
+}
+
+func extractHeaders(nonCachedHeaders []string, headers http.Header) []string {
+	var headerValues []string
+
+	for _, nonCachedHeader := range nonCachedHeaders {
+		headerValue, ok := headers[nonCachedHeader]
+		if ok {
+			headerValues = append(headerValues, headerValue...)
+		}
+	}
+
+	return headerValues
 }
 
 // NewClient initializes the cache HTTP middleware client with the given
@@ -282,6 +313,15 @@ func ClientWithMethods(methods []string) ClientOption {
 			}
 		}
 		c.methods = methods
+		return nil
+	}
+}
+
+// ClientWithNonCacheableHeaders sets the un-cacheable headers.
+// If you provide []string{"geo-country"} cache will be missed with different "geo-country" header but same URL.
+func ClientWithNonCacheableHeaders(headers []string) ClientOption {
+	return func(c *Client) error {
+		c.nonCacheableHeaders = headers
 		return nil
 	}
 }
