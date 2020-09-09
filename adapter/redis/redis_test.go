@@ -5,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/victorspringer/http-cache"
+	goredis "github.com/go-redis/redis/v7"
+	cache "github.com/victorspringer/http-cache"
 )
 
 var a cache.Adapter
 
 func TestSet(t *testing.T) {
-	a = NewAdapter(&RingOptions{
-		Addrs: map[string]string{
-			"server": ":6379",
-		},
+	r := goredis.NewClient(&goredis.Options{
+		Addr: ":6379",
 	})
+	a = NewAdapter(r)
 
 	tests := []struct {
 		name     string

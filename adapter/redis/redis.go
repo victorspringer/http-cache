@@ -27,8 +27,8 @@ package redis
 import (
 	"time"
 
-	redisCache "github.com/go-redis/cache"
-	"github.com/go-redis/redis"
+	redisCache "github.com/go-redis/cache/v7"
+	goredis "github.com/go-redis/redis/v7"
 	cache "github.com/victorspringer/http-cache"
 	"github.com/vmihailenco/msgpack"
 )
@@ -38,8 +38,11 @@ type Adapter struct {
 	store *redisCache.Codec
 }
 
-// RingOptions exports go-redis RingOptions type.
-type RingOptions redis.RingOptions
+type rediser interface {
+	Set(key string, value interface{}, expiration time.Duration) *goredis.StatusCmd
+	Get(key string) *goredis.StringCmd
+	Del(keys ...string) *goredis.IntCmd
+}
 
 // Get implements the cache Adapter interface Get method.
 func (a *Adapter) Get(key uint64) ([]byte, bool) {
@@ -66,11 +69,10 @@ func (a *Adapter) Release(key uint64) {
 }
 
 // NewAdapter initializes Redis adapter.
-func NewAdapter(opt *RingOptions) cache.Adapter {
-	ropt := redis.RingOptions(*opt)
+func NewAdapter(r rediser) cache.Adapter {
 	return &Adapter{
 		&redisCache.Codec{
-			Redis: redis.NewRing(&ropt),
+			Redis: r,
 			Marshal: func(v interface{}) ([]byte, error) {
 				return msgpack.Marshal(v)
 
