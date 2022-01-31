@@ -126,6 +126,7 @@ http-cache memory adapter takes way less GC pause time, that means smaller GC ov
 - Develop MongoDB adapter
 
 ## Who's using?
+- [home24](www.home24.de)
 - [americanas.com](https://www.americanas.com.br)
 - [Submarino](https://www.submarino.com.br)
 - [Shoptime](https://www.shoptime.com.br)
