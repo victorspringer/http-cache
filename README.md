@@ -73,7 +73,7 @@ import (
             "server": ":6379",
         },
     }
-    cacheClient := cache.NewClient(
+    cacheClient, err := cache.NewClient(
         cache.ClientWithAdapter(redis.NewAdapter(ringOpt)),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
