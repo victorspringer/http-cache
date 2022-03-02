@@ -123,10 +123,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
-						w.WriteHeader(response.StatusCode)
 						for k, v := range response.Header {
 							w.Header().Set(k, strings.Join(v, ","))
 						}
+						w.WriteHeader(response.StatusCode)
 						w.Write(response.Value)
 						return
 					}
