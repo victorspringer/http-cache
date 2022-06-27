@@ -65,11 +65,12 @@ type Response struct {
 
 // Client data structure for HTTP cache middleware.
 type Client struct {
-	adapter          Adapter
-	ttl              time.Duration
-	refreshKey       string
-	methods          []string
-	statusCodeFilter func(int) bool
+	adapter            Adapter
+	ttl                time.Duration
+	refreshKey         string
+	methods            []string
+	statusCodeFilter   func(int) bool
+	writeExpiresHeader bool
 }
 
 // ClientOption is used to set Client settings.
@@ -126,6 +127,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						for k, v := range response.Header {
 							w.Header().Set(k, strings.Join(v, ","))
 						}
+						if c.writeExpiresHeader {
+							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
+						}
 						w.WriteHeader(response.StatusCode)
 						w.Write(response.Value)
 						return
@@ -141,14 +145,14 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 			statusCode := result.StatusCode
 			value := rec.Body.Bytes()
+			now := time.Now()
+			expires := now.Add(c.ttl)
 			if c.statusCodeFilter(statusCode) {
-				now := time.Now()
-
 				response := Response{
 					Value:      value,
 					Header:     result.Header,
 					StatusCode: statusCode,
-					Expiration: now.Add(c.ttl),
+					Expiration: expires,
 					LastAccess: now,
 					Frequency:  1,
 				}
@@ -156,6 +160,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			}
 			for k, v := range result.Header {
 				w.Header().Set(k, strings.Join(v, ","))
+			}
+			if c.writeExpiresHeader {
+				w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
 			}
 			w.WriteHeader(statusCode)
 			w.Write(value)
@@ -299,6 +306,15 @@ func ClientWithMethods(methods []string) ClientOption {
 func ClientWithStatusCodeFilter(filter func(int) bool) ClientOption {
 	return func(c *Client) error {
 		c.statusCodeFilter = filter
+		return nil
+	}
+}
+
+// ClientWithExpiresHeader enables middleware to add an Expires header to responses.
+// Optional setting. If not set, default is false.
+func ClientWithExpiresHeader() ClientOption {
+	return func(c *Client) error {
+		c.writeExpiresHeader = true
 		return nil
 	}
 }
