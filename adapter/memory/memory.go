@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/victorspringer/http-cache"
+	cache "github.com/victorspringer/http-cache"
 )
 
 // Algorithm is the string type for caching algorithms labels.
@@ -76,17 +76,21 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
-	a.mutex.RLock()
-	length := len(a.store)
-	a.mutex.RUnlock()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 
-	if length > 0 && length == a.capacity {
+	if _, ok := a.store[key]; ok {
+		// Known key, overwrite previous item.
+		a.store[key] = response
+		return
+	}
+
+	// New key, make sure we have the capacity.
+	if len(a.store) == a.capacity {
 		a.evict()
 	}
 
-	a.mutex.Lock()
 	a.store[key] = response
-	a.mutex.Unlock()
 }
 
 // Release implements the Adapter interface Release method.
@@ -102,6 +106,8 @@ func (a *Adapter) Release(key uint64) {
 	}
 }
 
+// evict removes a single entry from the store. It assumes that the caller holds
+// the write lock.
 func (a *Adapter) evict() {
 	selectedKey := uint64(0)
 	lastAccess := time.Now()
@@ -140,7 +146,7 @@ func (a *Adapter) evict() {
 		}
 	}
 
-	a.Release(selectedKey)
+	delete(a.store, selectedKey)
 }
 
 // NewAdapter initializes memory adapter.
