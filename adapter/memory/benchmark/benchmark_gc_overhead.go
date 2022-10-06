@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	"github.com/allegro/bigcache"
@@ -65,11 +66,11 @@ func benchmarkBigCache() {
 
 	for i := 0; i < entries; i++ {
 		key, val := generateKeyValue(i, valueSize)
-		bigcache.Set(string(key), val)
+		bigcache.Set(strconv.Itoa(key), val)
 	}
 
 	firstKey, _ := generateKeyValue(1, valueSize)
-	checkFirstElement(bigcache.Get(string(firstKey)))
+	checkFirstElement(bigcache.Get(strconv.Itoa(firstKey)))
 
 	fmt.Println("GC pause for bigcache: ", gcPause())
 

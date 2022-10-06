@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/victorspringer/http-cache"
+	cache "github.com/victorspringer/http-cache"
 )
 
 func TestGet(t *testing.T) {
@@ -106,6 +106,33 @@ func TestSet(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("set is thread safe", func(t *testing.T) {
+		maxSize := 2
+		a := &Adapter{
+			sync.RWMutex{},
+			maxSize,
+			LRU,
+			make(map[uint64][]byte),
+		}
+
+		var wg sync.WaitGroup
+		for i := 0; i < 100; i++ {
+			var i uint64 = uint64(i)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.Set(i, nil, time.Now().Add(1*time.Hour))
+			}()
+		}
+
+		wg.Wait()
+
+		if maxSize < len(a.store) {
+			t.Errorf("cache became too big, max: %d, actual size: %d", maxSize, len(a.store))
+		}
+	})
 }
 
 func TestRelease(t *testing.T) {
