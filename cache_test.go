@@ -53,21 +53,25 @@ func TestMiddleware(t *testing.T) {
 
 	adapter := &adapterMock{
 		store: map[uint64][]byte{
-			14974843192121052621: Response{
+			generateKey("http://foo.bar/test-1", nil): Response{
 				Value:      []byte("value 1"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
-			14974839893586167988: Response{
+			generateKey("http://foo.bar/test-2", nil): Response{
 				Value:      []byte("value 2"),
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
-			14974840993097796199: Response{
+			generateKey("http://foo.bar/test-3", nil): Response{
 				Value:      []byte("value 3"),
 				Expiration: time.Now().Add(-1 * time.Minute),
 			}.Bytes(),
-			10956846073361780255: Response{
+			generateKey("http://foo.bar/test-4", nil): Response{
 				Value:      []byte("value 4"),
 				Expiration: time.Now().Add(-1 * time.Minute),
+			}.Bytes(),
+			generateKey("http://foo.bar/test-5", []string{"test5"}): Response{
+				Value:      []byte("value 5"),
+				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
 		},
 	}
@@ -77,6 +81,7 @@ func TestMiddleware(t *testing.T) {
 		ClientWithTTL(1*time.Minute),
 		ClientWithRefreshKey("rk"),
 		ClientWithMethods([]string{http.MethodGet, http.MethodPost}),
+		ClientWithNonCacheableHeaders([]string{"country"}),
 	)
 
 	handler := client.Middleware(httpTestHandler)
@@ -86,6 +91,7 @@ func TestMiddleware(t *testing.T) {
 		url      string
 		method   string
 		body     []byte
+		headers  http.Header
 		wantBody string
 		wantCode int
 	}{
@@ -94,6 +100,7 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-1",
 			"GET",
 			nil,
+			http.Header{},
 			"value 1",
 			200,
 		},
@@ -102,6 +109,7 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"PUT",
 			nil,
+			http.Header{},
 			"new value 2",
 			200,
 		},
@@ -110,6 +118,7 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			nil,
+			http.Header{},
 			"value 2",
 			200,
 		},
@@ -118,6 +127,7 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3?zaz=baz&baz=zaz",
 			"GET",
 			nil,
+			http.Header{},
 			"new value 4",
 			200,
 		},
@@ -126,6 +136,7 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3?baz=zaz&zaz=baz",
 			"GET",
 			nil,
+			http.Header{},
 			"new value 4",
 			200,
 		},
@@ -134,7 +145,17 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3",
 			"GET",
 			nil,
+			http.Header{},
 			"new value 6",
+			200,
+		},
+		{
+			"returns cached response",
+			"http://foo.bar/test-5",
+			"GET",
+			[]byte(``),
+			http.Header{"country": {"test5"}},
+			"value 5",
 			200,
 		},
 		{
@@ -142,7 +163,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2?rk=true",
 			"GET",
 			nil,
-			"new value 7",
+			http.Header{},
+			"new value 8",
 			200,
 		},
 		{
@@ -150,7 +172,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			nil,
-			"new value 7",
+			http.Header{},
+			"new value 8",
 			200,
 		},
 		{
@@ -158,7 +181,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
-			"new value 9",
+			http.Header{},
+			"new value 10",
 			200,
 		},
 		{
@@ -166,7 +190,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
-			"new value 9",
+			http.Header{},
+			"new value 10",
 			200,
 		},
 		{
@@ -174,7 +199,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			[]byte(`{"foo": "bar"}`),
-			"new value 7",
+			http.Header{},
+			"new value 8",
 			200,
 		},
 		{
@@ -182,7 +208,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
-			"new value 12",
+			http.Header{},
+			"new value 13",
 			200,
 		},
 	}
@@ -192,19 +219,22 @@ func TestMiddleware(t *testing.T) {
 			var r *http.Request
 			var err error
 
-			if counter != 12 {
+			if counter != 13 {
 				reader := bytes.NewReader(tt.body)
 				r, err = http.NewRequest(tt.method, tt.url, reader)
 				if err != nil {
 					t.Error(err)
 					return
 				}
+				r.Header = tt.headers
 			} else {
 				r, err = http.NewRequest(tt.method, tt.url, errReader(0))
 				if err != nil {
 					t.Error(err)
 					return
 				}
+
+				r.Header = tt.headers
 			}
 
 			w := httptest.NewRecorder()
@@ -309,11 +339,21 @@ func TestGenerateKeyString(t *testing.T) {
 		"http://localhost:8080/category",
 		"http://localhost:8080/category/morisco",
 		"http://localhost:8080/category/mourisquinho",
+		"http://localhost:8080/category/mourisquinho",
+		"http://localhost:8080/category/mourisquinho",
+	}
+
+	headers := [][]string{
+		{},
+		{},
+		{},
+		{"test1"},
+		{"test1", "test2"},
 	}
 
 	keys := make(map[string]string, len(urls))
-	for _, u := range urls {
-		rawKey := generateKey(u)
+	for i, u := range urls {
+		rawKey := generateKey(u, headers[i])
 		key := KeyAsString(rawKey)
 
 		if otherURL, found := keys[key]; found {
@@ -325,29 +365,39 @@ func TestGenerateKeyString(t *testing.T) {
 
 func TestGenerateKey(t *testing.T) {
 	tests := []struct {
-		name string
-		URL  string
-		want uint64
+		name                  string
+		URL                   string
+		nonCachedHeaderValues []string
+		want                  uint64
 	}{
 		{
 			"get url checksum",
 			"http://foo.bar/test-1",
+			[]string{},
 			14974843192121052621,
 		},
 		{
 			"get url 2 checksum",
 			"http://foo.bar/test-2",
+			[]string{},
 			14974839893586167988,
 		},
 		{
 			"get url 3 checksum",
 			"http://foo.bar/test-3",
+			[]string{},
 			14974840993097796199,
+		},
+		{
+			"get url checksum with non-cached headers",
+			"http://foo.bar/test-3",
+			[]string{"value1", "value2"},
+			6093834678676844634,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := generateKey(tt.URL); got != tt.want {
+			if got := generateKey(tt.URL, tt.nonCachedHeaderValues); got != tt.want {
 				t.Errorf("generateKey() = %v, want %v", got, tt.want)
 			}
 		})
@@ -356,33 +406,44 @@ func TestGenerateKey(t *testing.T) {
 
 func TestGenerateKeyWithBody(t *testing.T) {
 	tests := []struct {
-		name string
-		URL  string
-		body []byte
-		want uint64
+		name                  string
+		URL                   string
+		nonCachedHeaderValues []string
+		body                  []byte
+		want                  uint64
 	}{
 		{
 			"get POST checksum",
 			"http://foo.bar/test-1",
+			[]string{},
 			[]byte(`{"foo": "bar"}`),
 			16224051135567554746,
 		},
 		{
 			"get POST 2 checksum",
 			"http://foo.bar/test-1",
+			[]string{},
 			[]byte(`{"bar": "foo"}`),
 			3604153880186288164,
 		},
 		{
 			"get POST 3 checksum",
 			"http://foo.bar/test-2",
+			[]string{},
 			[]byte(`{"foo": "bar"}`),
 			10956846073361780255,
+		},
+		{
+			"get POST 3 checksum with cached headers",
+			"http://foo.bar/test-2",
+			[]string{"value1", "value2"},
+			[]byte(`{"foo": "bar"}`),
+			16634781976963392442,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := generateKeyWithBody(tt.URL, tt.body); got != tt.want {
+			if got := generateKeyWithBody(tt.URL, tt.nonCachedHeaderValues, tt.body); got != tt.want {
 				t.Errorf("generateKeyWithBody() = %v, want %v", got, tt.want)
 			}
 		})
@@ -475,6 +536,38 @@ func TestNewClient(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NewClient() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_extractHeaders(t *testing.T) {
+	type args struct {
+		nonCachedHeaders []string
+		headers          http.Header
+	}
+	tests := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{
+			"general",
+			args{
+				[]string{"test1", "test2"},
+				http.Header{
+					"test1": []string{"test1Value1", "test1Value2"},
+					"test2": []string{"test2Value1"},
+					"test3": []string{"test3Value1"},
+				},
+			},
+			[]string{"test1Value1", "test1Value2", "test2Value1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractHeaders(tt.args.nonCachedHeaders, tt.args.headers); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("extractHeaders() = %v, want %v", got, tt.want)
 			}
 		})
 	}
