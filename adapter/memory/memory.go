@@ -238,7 +238,7 @@ type storageControl struct {
 
 func (s *storageControl) add(v int) {
 	if v >= 0 {
-		s.cur += v //if you roll over an int64, well... sorry?
+		s.cur += v // if you roll over an int64, well... sorry?
 	}
 }
 
