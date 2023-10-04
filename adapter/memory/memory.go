@@ -91,7 +91,7 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 		a.evict()
 	}
 
-	//now evict based on storage
+	// now evict based on storage
 	for a.storage.shouldEvict(len(response)) {
 		a.evict()
 	}
@@ -245,7 +245,7 @@ func (s *storageControl) add(v int) {
 func (s *storageControl) del(v int) {
 	if v >= 0 {
 		if s.cur = s.cur - v; s.cur < 0 {
-			s.cur = 0 //safety check it
+			s.cur = 0 // safety check it
 		}
 	}
 }
@@ -254,7 +254,7 @@ func (s *storageControl) del(v int) {
 // we will NOT evict our max is set to 0 (e.g. we are not tracking total bytes)
 func (s *storageControl) shouldEvict(newBytes int) bool {
 	if s.max <= 0 {
-		return false //basically "we have no opinion"
+		return false // basically "we have no opinion"
 	}
 	if next := (s.cur + newBytes); next < 0 || next > s.max {
 		return true

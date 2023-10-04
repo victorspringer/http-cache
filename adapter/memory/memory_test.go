@@ -352,5 +352,4 @@ func TestStorageEvict(t *testing.T) {
 			t.Fatalf("value prematurely evicted: %d != %d", l, cnt)
 		}
 	}
-
 }
