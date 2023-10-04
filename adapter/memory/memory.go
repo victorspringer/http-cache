@@ -56,6 +56,7 @@ type Adapter struct {
 	capacity  int
 	algorithm Algorithm
 	store     map[uint64][]byte
+	storage   storageControl
 }
 
 // AdapterOptions is used to set Adapter settings.
@@ -90,18 +91,29 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 		a.evict()
 	}
 
+	//now evict based on storage
+	for a.storage.shouldEvict(len(response)) {
+		a.evict()
+	}
+
 	a.store[key] = response
+	a.storage.add(len(response))
 }
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
+	var sz int
 	a.mutex.RLock()
-	_, ok := a.store[key]
+	b, ok := a.store[key]
+	if ok {
+		sz = len(b)
+	}
 	a.mutex.RUnlock()
 
 	if ok {
 		a.mutex.Lock()
 		delete(a.store, key)
+		a.storage.del(sz)
 		a.mutex.Unlock()
 	}
 }
@@ -119,6 +131,8 @@ func (a *Adapter) evict() {
 		frequency = 0
 	}
 
+	var sz int
+	var hit bool
 	for k, v := range a.store {
 		r := cache.BytesToResponse(v)
 		switch a.algorithm {
@@ -126,26 +140,33 @@ func (a *Adapter) evict() {
 			if r.LastAccess.Before(lastAccess) {
 				selectedKey = k
 				lastAccess = r.LastAccess
+				sz, hit = len(v), true
 			}
 		case MRU:
 			if r.LastAccess.After(lastAccess) ||
 				r.LastAccess.Equal(lastAccess) {
 				selectedKey = k
 				lastAccess = r.LastAccess
+				sz, hit = len(v), true
 			}
 		case LFU:
 			if r.Frequency < frequency {
 				selectedKey = k
 				frequency = r.Frequency
+				sz, hit = len(v), true
 			}
 		case MFU:
 			if r.Frequency >= frequency {
 				selectedKey = k
 				frequency = r.Frequency
+				sz, hit = len(v), true
 			}
 		}
 	}
 
+	if hit {
+		a.storage.del(sz)
+	}
 	delete(a.store, selectedKey)
 }
 
@@ -193,4 +214,57 @@ func AdapterWithCapacity(cap int) AdapterOptions {
 
 		return nil
 	}
+}
+
+// AdapterWithStorageCapacity sets the maximum number of cached bytes
+func AdapterWithStorageCapacity(cap int) AdapterOptions {
+	return func(a *Adapter) error {
+		if cap <= 0 {
+			return errors.New("memory adapter requires a storage capacity greater than 0")
+		}
+
+		a.storage = storageControl{
+			max: cap,
+		}
+
+		return nil
+	}
+}
+
+type storageControl struct {
+	max int
+	cur int
+}
+
+func (s *storageControl) add(v int) {
+	if v >= 0 {
+		s.cur += v //if you roll over an int64, well... sorry?
+	}
+}
+
+func (s *storageControl) del(v int) {
+	if v >= 0 {
+		if s.cur = s.cur - v; s.cur < 0 {
+			s.cur = 0 //safety check it
+		}
+	}
+}
+
+// storageShouldEvict will return true if the proposed new bytes plus current exceeds our max
+// we will NOT evict our max is set to 0 (e.g. we are not tracking total bytes)
+func (s *storageControl) shouldEvict(newBytes int) bool {
+	if s.max <= 0 {
+		return false //basically "we have no opinion"
+	}
+	if next := (s.cur + newBytes); next < 0 || next > s.max {
+		return true
+	}
+	return false
+}
+
+func (s *storageControl) canCache(newBytes int) bool {
+	if s.max <= 0 {
+		return true // we have no opinion
+	}
+	return s.max >= newBytes
 }
