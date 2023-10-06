@@ -11,10 +11,10 @@ import (
 
 func TestGet(t *testing.T) {
 	a := &Adapter{
-		sync.RWMutex{},
-		2,
-		LRU,
-		map[uint64][]byte{
+		mutex:     sync.RWMutex{},
+		capacity:  2,
+		algorithm: LRU,
+		store: map[uint64][]byte{
 			14974843192121052621: cache.Response{
 				Value:      []byte("value 1"),
 				Expiration: time.Now(),
@@ -60,10 +60,10 @@ func TestGet(t *testing.T) {
 
 func TestSet(t *testing.T) {
 	a := &Adapter{
-		sync.RWMutex{},
-		2,
-		LRU,
-		make(map[uint64][]byte),
+		mutex:     sync.RWMutex{},
+		capacity:  2,
+		algorithm: LRU,
+		store:     make(map[uint64][]byte),
 	}
 
 	tests := []struct {
@@ -110,10 +110,10 @@ func TestSet(t *testing.T) {
 	t.Run("set is thread safe", func(t *testing.T) {
 		maxSize := 2
 		a := &Adapter{
-			sync.RWMutex{},
-			maxSize,
-			LRU,
-			make(map[uint64][]byte),
+			mutex:     sync.RWMutex{},
+			capacity:  maxSize,
+			algorithm: LRU,
+			store:     make(map[uint64][]byte),
 		}
 
 		var wg sync.WaitGroup
@@ -137,10 +137,10 @@ func TestSet(t *testing.T) {
 
 func TestRelease(t *testing.T) {
 	a := &Adapter{
-		sync.RWMutex{},
-		2,
-		LRU,
-		map[uint64][]byte{
+		mutex:     sync.RWMutex{},
+		capacity:  2,
+		algorithm: LRU,
+		store: map[uint64][]byte{
 			14974843192121052621: cache.Response{
 				Expiration: time.Now().Add(1 * time.Minute),
 				Value:      []byte("value 1"),
@@ -212,10 +212,10 @@ func TestEvict(t *testing.T) {
 		count++
 
 		a := &Adapter{
-			sync.RWMutex{},
-			2,
-			tt.algorithm,
-			map[uint64][]byte{
+			mutex:     sync.RWMutex{},
+			capacity:  2,
+			algorithm: tt.algorithm,
+			store: map[uint64][]byte{
 				14974843192121052621: cache.Response{
 					Value:      []byte("value 1"),
 					Expiration: time.Now().Add(1 * time.Minute),
@@ -279,10 +279,10 @@ func TestNewAdapter(t *testing.T) {
 				AdapterWithAlgorithm(LRU),
 			},
 			&Adapter{
-				sync.RWMutex{},
-				4,
-				LRU,
-				make(map[uint64][]byte),
+				mutex:     sync.RWMutex{},
+				capacity:  4,
+				algorithm: LRU,
+				store:     make(map[uint64][]byte),
 			},
 			false,
 		},
@@ -322,5 +322,34 @@ func TestNewAdapter(t *testing.T) {
 				t.Errorf("NewAdapter() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStorageEvict(t *testing.T) {
+	a := &Adapter{
+		mutex:     sync.RWMutex{},
+		capacity:  64,
+		algorithm: LRU,
+		store:     map[uint64][]byte{},
+		storage: storageControl{
+			max: 14,
+		},
+	}
+
+	reqs := map[uint64][]byte{
+		14974843192121052621: []byte("value 1"),
+		14974839893586167988: []byte("value 2"),
+		14974840993097796199: []byte("value 3"),
+	}
+
+	var cnt int
+	for k, v := range reqs {
+		a.Set(k, v, time.Time{})
+		cnt++
+		if l := len(a.store); l > 2 {
+			t.Fatalf("value not evicted after breaching storage limit: %d > 2", l)
+		} else if cnt < 3 && len(a.store) != cnt {
+			t.Fatalf("value prematurely evicted: %d != %d", l, cnt)
+		}
 	}
 }
