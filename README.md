@@ -125,13 +125,6 @@ http-cache memory adapter takes way less GC pause time, that means smaller GC ov
 - Develop DynamoDB adapter
 - Develop MongoDB adapter
 
-## Who's using?
-- [home24](https://www.home24.de)
-- [americanas.com](https://www.americanas.com.br)
-- [Submarino](https://www.submarino.com.br)
-- [Shoptime](https://www.shoptime.com.br)
-- If you are using this package in a production environment, please let me know! :)
-
 ## Godoc Reference
 - [http-cache](https://godoc.org/github.com/victorspringer/http-cache)
 - [Memory adapter](https://godoc.org/github.com/victorspringer/http-cache/adapter/memory)
