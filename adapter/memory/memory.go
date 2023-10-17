@@ -180,7 +180,7 @@ func NewAdapter(opts ...AdapterOptions) (cache.Adapter, error) {
 		}
 	}
 
-	if a.capacity <= 1 {
+	if a.capacity <= 1 && a.storage.active() == false {
 		return nil, errors.New("memory adapter capacity is not set")
 	}
 
@@ -189,7 +189,11 @@ func NewAdapter(opts ...AdapterOptions) (cache.Adapter, error) {
 	}
 
 	a.mutex = sync.RWMutex{}
-	a.store = make(map[uint64][]byte, a.capacity)
+	if a.capacity > 0 {
+		a.store = make(map[uint64][]byte, a.capacity)
+	} else {
+		a.store = make(map[uint64][]byte, 4) //just init with something
+	}
 
 	return a, nil
 }
@@ -234,6 +238,10 @@ func AdapterWithStorageCapacity(cap int) AdapterOptions {
 type storageControl struct {
 	max int
 	cur int
+}
+
+func (s *storageControl) active() bool {
+	return s.max > 0
 }
 
 func (s *storageControl) add(v int) {
