@@ -30,7 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -92,13 +92,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			sortURLParams(r.URL)
 			key := generateKey(r.URL.String())
 			if r.Method == http.MethodPost && r.Body != nil {
-				body, err := ioutil.ReadAll(r.Body)
+				body, err := io.ReadAll(r.Body)
 				defer r.Body.Close()
 				if err != nil {
 					next.ServeHTTP(w, r)
 					return
 				}
-				reader := ioutil.NopCloser(bytes.NewBuffer(body))
+				reader := io.NopCloser(bytes.NewBuffer(body))
 				key = generateKeyWithBody(r.URL.String(), body)
 				r.Body = reader
 			}
