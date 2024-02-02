@@ -48,6 +48,9 @@ type Response struct {
 	// Header is the cached response header.
 	Header http.Header
 
+	// StatusCode is the cached response status code.
+	StatusCode int
+
 	// Expiration is the cached response expiration date.
 	Expiration time.Time
 
@@ -66,6 +69,7 @@ type Client struct {
 	ttl                time.Duration
 	refreshKey         string
 	methods            []string
+	statusCodeFilter   func(int) bool
 	writeExpiresHeader bool
 }
 
@@ -120,13 +124,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
-						//w.WriteHeader(http.StatusNotModified)
 						for k, v := range response.Header {
 							w.Header().Set(k, strings.Join(v, ","))
 						}
 						if c.writeExpiresHeader {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
 						}
+						w.WriteHeader(response.StatusCode)
 						w.Write(response.Value)
 						return
 					}
@@ -143,10 +147,11 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			value := rec.Body.Bytes()
 			now := time.Now()
 			expires := now.Add(c.ttl)
-			if statusCode < 400 {
+			if c.statusCodeFilter(statusCode) {
 				response := Response{
 					Value:      value,
 					Header:     result.Header,
+					StatusCode: statusCode,
 					Expiration: expires,
 					LastAccess: now,
 					Frequency:  1,
@@ -244,6 +249,9 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	if c.methods == nil {
 		c.methods = []string{http.MethodGet}
 	}
+	if c.statusCodeFilter == nil {
+		c.statusCodeFilter = func(code int) bool { return code < 400 }
+	}
 
 	return c, nil
 }
@@ -289,6 +297,15 @@ func ClientWithMethods(methods []string) ClientOption {
 			}
 		}
 		c.methods = methods
+		return nil
+	}
+}
+
+// ClientWithStatusCodeFilter sets the acceptable status codes to be cached.
+// Optional setting. If not set, default filter allows caching of every response with status code below 400.
+func ClientWithStatusCodeFilter(filter func(int) bool) ClientOption {
+	return func(c *Client) error {
+		c.statusCodeFilter = filter
 		return nil
 	}
 }

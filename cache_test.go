@@ -55,18 +55,22 @@ func TestMiddleware(t *testing.T) {
 		store: map[uint64][]byte{
 			14974843192121052621: Response{
 				Value:      []byte("value 1"),
+				StatusCode: 200,
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
 			14974839893586167988: Response{
 				Value:      []byte("value 2"),
+				StatusCode: 200,
 				Expiration: time.Now().Add(1 * time.Minute),
 			}.Bytes(),
 			14974840993097796199: Response{
 				Value:      []byte("value 3"),
+				StatusCode: 200,
 				Expiration: time.Now().Add(-1 * time.Minute),
 			}.Bytes(),
 			10956846073361780255: Response{
 				Value:      []byte("value 4"),
+				StatusCode: 200,
 				Expiration: time.Now().Add(-1 * time.Minute),
 			}.Bytes(),
 		},
@@ -473,8 +477,62 @@ func TestNewClient(t *testing.T) {
 				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+
+			if tt.want != nil {
+				got.statusCodeFilter = nil
+				tt.want.statusCodeFilter = nil
+			}
+
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NewClient() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewClientWithStatusCodeFilter(t *testing.T) {
+	adapter := &adapterMock{}
+
+	tests := []struct {
+		name      string
+		opts      []ClientOption
+		wantCache []int
+		wantSkip  []int
+	}{
+		{
+			"returns new client with status code filter",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+			},
+			[]int{200, 300},
+			[]int{400, 500},
+		},
+		{
+			"returns new client with status code filter",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithStatusCodeFilter(func(code int) bool { return code < 350 || code > 450 }),
+			},
+			[]int{200, 300, 500},
+			[]int{400},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := NewClient(tt.opts...)
+
+			for _, c := range tt.wantCache {
+				if got.statusCodeFilter(c) == false {
+					t.Errorf("NewClient() allows caching of status code %v, don't want it to", c)
+				}
+			}
+
+			for _, c := range tt.wantSkip {
+				if got.statusCodeFilter(c) == true {
+					t.Errorf("NewClient() doesn't allow caching of status code %v, want it to", c)
+				}
 			}
 		})
 	}
