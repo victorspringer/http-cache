@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	cache "github.com/victorspringer/http-cache"
+	cache "github.com/ooaklee/http-cache"
 )
 
 // Algorithm is the string type for caching algorithms labels.
