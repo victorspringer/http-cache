@@ -46,6 +46,7 @@ func main() {
         cache.ClientWithAdapter(memcached),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
+        cache.ClientWithSkipCacheResponseHeader("x-skip-cache"),
     )
     if err != nil {
         fmt.Println(err)
@@ -77,6 +78,7 @@ import (
         cache.ClientWithAdapter(redis.NewAdapter(ringOpt)),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
+        cache.ClientWithSkipCacheResponseHeader("x-skip-cache"),
     )
 
 ...

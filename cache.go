@@ -62,11 +62,12 @@ type Response struct {
 
 // Client data structure for HTTP cache middleware.
 type Client struct {
-	adapter            Adapter
-	ttl                time.Duration
-	refreshKey         string
-	methods            []string
-	writeExpiresHeader bool
+	adapter                 Adapter
+	ttl                     time.Duration
+	refreshKey              string
+	skipCacheResponseHeader string
+	methods                 []string
+	writeExpiresHeader      bool
 }
 
 // ClientOption is used to set Client settings.
@@ -138,26 +139,35 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
 			result := rec.Result()
+			headers := w.Header()
 
 			statusCode := result.StatusCode
 			value := rec.Body.Bytes()
-			now := time.Now()
-			expires := now.Add(c.ttl)
-			if statusCode < 400 {
-				response := Response{
-					Value:      value,
-					Header:     result.Header,
-					Expiration: expires,
-					LastAccess: now,
-					Frequency:  1,
+
+			skipCachingResponse := headers.Get(c.skipCacheResponseHeader) != ""
+
+			if !skipCachingResponse {
+
+				now := time.Now()
+				expires := now.Add(c.ttl)
+				if statusCode < 400 {
+					response := Response{
+						Value:      value,
+						Header:     result.Header,
+						Expiration: expires,
+						LastAccess: now,
+						Frequency:  1,
+					}
+					c.adapter.Set(key, response.Bytes(), response.Expiration)
 				}
-				c.adapter.Set(key, response.Bytes(), response.Expiration)
+				if c.writeExpiresHeader {
+					w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
+				}
+
 			}
+
 			for k, v := range result.Header {
 				w.Header().Set(k, strings.Join(v, ","))
-			}
-			if c.writeExpiresHeader {
-				w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
 			}
 			w.WriteHeader(statusCode)
 			w.Write(value)
@@ -275,6 +285,16 @@ func ClientWithTTL(ttl time.Duration) ClientOption {
 func ClientWithRefreshKey(refreshKey string) ClientOption {
 	return func(c *Client) error {
 		c.refreshKey = refreshKey
+		return nil
+	}
+}
+
+// ClientWithSkipCacheResponseHeader sets the name of the response header
+// that will be used to ensure a response does not get cached.
+// Optional setting.
+func ClientWithSkipCacheResponseHeader(headerName string) ClientOption {
+	return func(c *Client) error {
+		c.skipCacheResponseHeader = headerName
 		return nil
 	}
 }
