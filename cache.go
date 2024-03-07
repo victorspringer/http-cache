@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,7 @@ type Client struct {
 	ttl                     time.Duration
 	refreshKey              string
 	skipCacheResponseHeader string
+	skipCacheUriPathRegex   *regexp.Regexp
 	methods                 []string
 	writeExpiresHeader      bool
 }
@@ -89,7 +91,8 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c.cacheableMethod(r.Method) {
+
+		if c.cacheableUriPath(r.URL) && c.cacheableMethod(r.Method) {
 			sortURLParams(r.URL)
 			key := generateKey(r.URL.String())
 			if r.Method == http.MethodPost && r.Body != nil {
@@ -184,6 +187,20 @@ func (c *Client) cacheableMethod(method string) bool {
 		}
 	}
 	return false
+}
+
+// cacheableUriPath takes the request url and see if it
+// matches regex used for skipping cache based on request
+// path
+func (c *Client) cacheableUriPath(requestUrl *url.URL) bool {
+
+	if c.skipCacheUriPathRegex == nil {
+		return true
+	}
+
+	foundMatchingUriPath := c.skipCacheUriPathRegex.FindString(requestUrl.Path)
+
+	return foundMatchingUriPath == ""
 }
 
 // BytesToResponse converts bytes array into Response data structure.
@@ -295,6 +312,17 @@ func ClientWithRefreshKey(refreshKey string) ClientOption {
 func ClientWithSkipCacheResponseHeader(headerName string) ClientOption {
 	return func(c *Client) error {
 		c.skipCacheResponseHeader = headerName
+		return nil
+	}
+}
+
+// ClientWithSkipCacheUriPathRegex sets the regex that will be
+// used to ensure that both request/response of matching path
+// is free of cache.
+// Optional setting.
+func ClientWithSkipCacheUriPathRegex(uriPathRegex *regexp.Regexp) ClientOption {
+	return func(c *Client) error {
+		c.skipCacheUriPathRegex = uriPathRegex
 		return nil
 	}
 }
