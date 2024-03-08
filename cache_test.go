@@ -62,6 +62,10 @@ func (errReader) Read(p []byte) (n int, err error) {
 func TestMiddleware(t *testing.T) {
 	counter := 0
 	httpTestHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query()["set-skip-header"]; len(q) > 0 {
+			w.Header().Add("X-Skip", "1")
+		}
+
 		w.Write([]byte(fmt.Sprintf("new value %v", counter)))
 	})
 
@@ -86,28 +90,42 @@ func TestMiddleware(t *testing.T) {
 		},
 	}
 
+	exampleRegex := regexp.MustCompile("^/test-4$")
+
 	client, _ := NewClient(
 		ClientWithAdapter(adapter),
 		ClientWithTTL(1*time.Minute),
 		ClientWithRefreshKey("rk"),
 		ClientWithMethods([]string{http.MethodGet, http.MethodPost}),
+		ClientWithSkipCacheResponseHeader("X-Skip"),
+		ClientWithSkipCacheUriPathRegex(exampleRegex),
 	)
 
-	handler := client.Middleware(httpTestHandler)
+	handlers := http.ServeMux{}
+	handlers.Handle("/test-1", httpTestHandler)
+	handlers.Handle("/test-2", httpTestHandler)
+	handlers.Handle("/test-3", httpTestHandler)
+	handlers.Handle("/test-4", httpTestHandler)
+
+	handler := client.Middleware(&handlers)
 
 	tests := []struct {
-		name     string
-		url      string
-		method   string
-		body     []byte
-		wantBody string
-		wantCode int
+		name          string
+		url           string
+		method        string
+		body          []byte
+		setSkipHeader bool
+		skipPath      string
+		wantBody      string
+		wantCode      int
 	}{
 		{
 			"returns cached response",
 			"http://foo.bar/test-1",
 			"GET",
 			nil,
+			false,
+			"",
 			"value 1",
 			200,
 		},
@@ -116,6 +134,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"PUT",
 			nil,
+			false,
+			"",
 			"new value 2",
 			200,
 		},
@@ -124,6 +144,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			nil,
+			false,
+			"",
 			"value 2",
 			200,
 		},
@@ -132,6 +154,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3?zaz=baz&baz=zaz",
 			"GET",
 			nil,
+			false,
+			"",
 			"new value 4",
 			200,
 		},
@@ -140,6 +164,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3?baz=zaz&zaz=baz",
 			"GET",
 			nil,
+			false,
+			"",
 			"new value 4",
 			200,
 		},
@@ -148,6 +174,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-3",
 			"GET",
 			nil,
+			false,
+			"",
 			"new value 6",
 			200,
 		},
@@ -156,6 +184,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2?rk=true",
 			"GET",
 			nil,
+			false,
+			"",
 			"new value 7",
 			200,
 		},
@@ -164,6 +194,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			nil,
+			false,
+			"",
 			"new value 7",
 			200,
 		},
@@ -172,6 +204,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
+			false,
+			"",
 			"new value 9",
 			200,
 		},
@@ -180,6 +214,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
+			false,
+			"",
 			"new value 9",
 			200,
 		},
@@ -188,6 +224,8 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"GET",
 			[]byte(`{"foo": "bar"}`),
+			false,
+			"",
 			"new value 7",
 			200,
 		},
@@ -196,7 +234,59 @@ func TestMiddleware(t *testing.T) {
 			"http://foo.bar/test-2",
 			"POST",
 			[]byte(`{"foo": "bar"}`),
+			false,
+			"",
 			"new value 12",
+			200,
+		},
+		{
+			"skip cached using header - new uncached response",
+			"http://foo.bar/test-2?set-skip-header=1",
+			"GET",
+			nil,
+			false,
+			"",
+			"new value 13",
+			200,
+		},
+		{
+			"skip cached using header - new uncached response (confirm)",
+			"http://foo.bar/test-2?set-skip-header=1",
+			"GET",
+			nil,
+			false,
+			"",
+			"new value 14",
+			200,
+		},
+		{
+			"skip cached using header - confirm didn't change cached value",
+			"http://foo.bar/test-2",
+			"GET",
+			nil,
+			false,
+			"",
+			"new value 7",
+			200,
+		},
+		{
+			"skip cache by regex path - returns new uncached response",
+			"http://foo.bar/test-4",
+			"GET",
+			nil,
+			false,
+			"",
+			"new value 16",
+			200,
+		},
+		{
+			"skip cache by regex path - returns new uncached response (confirm)",
+			"http://foo.bar/test-4",
+			"GET",
+			nil,
+			false,
+			"",
+			"new value 17",
 			200,
 		},
 	}
