@@ -29,7 +29,7 @@ import (
 
 	redisCache "github.com/go-redis/cache"
 	"github.com/go-redis/redis"
-	cache "github.com/ooaklee/http-cache"
+	cache "github.com/victorspringer/http-cache"
 	"github.com/vmihailenco/msgpack"
 )
 

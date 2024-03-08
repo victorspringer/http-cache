@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/allegro/bigcache"
-	"github.com/ooaklee/http-cache/adapter/memory"
+	"github.com/victorspringer/http-cache/adapter/memory"
 )
 
 const (
