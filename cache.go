@@ -142,7 +142,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
 			result := rec.Result()
-			headers := rec.Header()
+			headers := result.Header
 
 			statusCode := result.StatusCode
 			value := rec.Body.Bytes()
