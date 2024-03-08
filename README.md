@@ -42,10 +42,14 @@ func main() {
         os.Exit(1)
     }
 
+    examplePathRegex := regexp.MustCompile(`^/api/v1/.*`)
+
     cacheClient, err := cache.NewClient(
         cache.ClientWithAdapter(memcached),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
+        cache.ClientWithSkipCacheResponseHeader("x-skip-example"),
+        cache.ClientWithSkipCacheUriPathRegex(examplePathRegex)
     )
     if err != nil {
         fmt.Println(err)
@@ -73,13 +77,42 @@ import (
             "server": ":6379",
         },
     }
+
+    examplePathRegex := regexp.MustCompile(`^/api/v1/.*`)
+
     cacheClient, err := cache.NewClient(
         cache.ClientWithAdapter(redis.NewAdapter(ringOpt)),
         cache.ClientWithTTL(10 * time.Minute),
         cache.ClientWithRefreshKey("opn"),
+        cache.ClientWithSkipCacheResponseHeader("x-skip-example"),
+        cache.ClientWithSkipCacheUriPathRegex(examplePathRegex)
     )
 
 ...
+```
+
+Example of handler func skipping cache using response header
+```go
+...
+    cacheClient, err := cache.NewClient(
+        cache.ClientWithAdapter(memcached),
+        cache.ClientWithTTL(10 * time.Minute),
+        cache.ClientWithSkipCacheResponseHeader("x-skip-example"),
+    )
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    example := func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Add("X-Skip-Example", "1")
+		w.Write([]byte(fmt.Sprintf("response value at %s", time.Now().UTC().String())))
+	}
+
+    handler := http.HandlerFunc(example)
+...
+```
+
 ```
 
 ## Benchmarks

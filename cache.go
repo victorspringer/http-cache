@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,11 +63,13 @@ type Response struct {
 
 // Client data structure for HTTP cache middleware.
 type Client struct {
-	adapter            Adapter
-	ttl                time.Duration
-	refreshKey         string
-	methods            []string
-	writeExpiresHeader bool
+	adapter                 Adapter
+	ttl                     time.Duration
+	refreshKey              string
+	skipCacheResponseHeader string
+	skipCacheUriPathRegex   *regexp.Regexp
+	methods                 []string
+	writeExpiresHeader      bool
 }
 
 // ClientOption is used to set Client settings.
@@ -88,7 +91,8 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c.cacheableMethod(r.Method) {
+
+		if c.cacheableUriPath(r.URL) && c.cacheableMethod(r.Method) {
 			sortURLParams(r.URL)
 			key := generateKey(r.URL.String())
 			if r.Method == http.MethodPost && r.Body != nil {
@@ -138,26 +142,35 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
 			result := rec.Result()
+			headers := result.Header
 
 			statusCode := result.StatusCode
 			value := rec.Body.Bytes()
-			now := time.Now()
-			expires := now.Add(c.ttl)
-			if statusCode < 400 {
-				response := Response{
-					Value:      value,
-					Header:     result.Header,
-					Expiration: expires,
-					LastAccess: now,
-					Frequency:  1,
+
+			skipCachingResponse := headers.Get(c.skipCacheResponseHeader) != ""
+
+			if !skipCachingResponse {
+
+				now := time.Now()
+				expires := now.Add(c.ttl)
+				if statusCode < 400 {
+					response := Response{
+						Value:      value,
+						Header:     result.Header,
+						Expiration: expires,
+						LastAccess: now,
+						Frequency:  1,
+					}
+					c.adapter.Set(key, response.Bytes(), response.Expiration)
 				}
-				c.adapter.Set(key, response.Bytes(), response.Expiration)
+				if c.writeExpiresHeader {
+					w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
+				}
+
 			}
+
 			for k, v := range result.Header {
 				w.Header().Set(k, strings.Join(v, ","))
-			}
-			if c.writeExpiresHeader {
-				w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
 			}
 			w.WriteHeader(statusCode)
 			w.Write(value)
@@ -174,6 +187,20 @@ func (c *Client) cacheableMethod(method string) bool {
 		}
 	}
 	return false
+}
+
+// cacheableUriPath takes the request url and see if it
+// matches regex used for skipping cache based on request
+// path
+func (c *Client) cacheableUriPath(requestUrl *url.URL) bool {
+
+	if c.skipCacheUriPathRegex == nil {
+		return true
+	}
+
+	foundMatchingUriPath := c.skipCacheUriPathRegex.FindString(requestUrl.Path)
+
+	return foundMatchingUriPath == ""
 }
 
 // BytesToResponse converts bytes array into Response data structure.
@@ -275,6 +302,27 @@ func ClientWithTTL(ttl time.Duration) ClientOption {
 func ClientWithRefreshKey(refreshKey string) ClientOption {
 	return func(c *Client) error {
 		c.refreshKey = refreshKey
+		return nil
+	}
+}
+
+// ClientWithSkipCacheResponseHeader sets the name of the response header
+// that will be used to ensure a response does not get cached.
+// Optional setting.
+func ClientWithSkipCacheResponseHeader(headerName string) ClientOption {
+	return func(c *Client) error {
+		c.skipCacheResponseHeader = headerName
+		return nil
+	}
+}
+
+// ClientWithSkipCacheUriPathRegex sets the regex that will be
+// used to ensure that both request/response of matching path
+// is free of cache.
+// Optional setting.
+func ClientWithSkipCacheUriPathRegex(uriPathRegex *regexp.Regexp) ClientOption {
+	return func(c *Client) error {
+		c.skipCacheUriPathRegex = uriPathRegex
 		return nil
 	}
 }
