@@ -32,7 +32,6 @@ import (
 	"hash/fnv"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strconv"
@@ -135,34 +134,27 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 			}
 
-			rec := httptest.NewRecorder()
-			next.ServeHTTP(rec, r)
-			result := rec.Result()
+			rw := &responseWriter{ResponseWriter: w}
+			next.ServeHTTP(rw, r)
 
-			statusCode := result.StatusCode
-			value := rec.Body.Bytes()
+			statusCode := rw.statusCode
+			value := rw.body
 			now := time.Now()
 			expires := now.Add(c.ttl)
 			if statusCode < 400 {
 				response := Response{
 					Value:      value,
-					Header:     result.Header,
+					Header:     rw.Header(),
 					Expiration: expires,
 					LastAccess: now,
 					Frequency:  1,
 				}
 				c.adapter.Set(key, response.Bytes(), response.Expiration)
 			}
-			for k, v := range result.Header {
-				w.Header().Set(k, strings.Join(v, ","))
-			}
-			if c.writeExpiresHeader {
-				w.Header().Set("Expires", expires.UTC().Format(http.TimeFormat))
-			}
-			w.WriteHeader(statusCode)
-			w.Write(value)
+
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -300,4 +292,20 @@ func ClientWithExpiresHeader() ClientOption {
 		c.writeExpiresHeader = true
 		return nil
 	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       []byte
+}
+
+func (w *responseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	w.body = b
+	return w.ResponseWriter.Write(b)
 }
