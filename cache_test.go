@@ -272,7 +272,7 @@ func TestResponseToBytes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := tt.response.Bytes()
-			if b == nil || len(b) == 0 {
+			if len(b) == 0 {
 				t.Error("Bytes() failed to convert")
 				return
 			}
