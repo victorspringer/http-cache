@@ -19,7 +19,7 @@ This is an example of use with the memory adapter:
 package main
 
 import (
-    "fmt"
+    "log"
     "net/http"
     "os"
     "time"
@@ -38,8 +38,7 @@ func main() {
         memory.AdapterWithCapacity(10000000),
     )
     if err != nil {
-        fmt.Println(err)
-        os.Exit(1)
+        log.Fatal(err)
     }
 
     cacheClient, err := cache.NewClient(
@@ -48,8 +47,7 @@ func main() {
         cache.ClientWithRefreshKey("opn"),
     )
     if err != nil {
-        fmt.Println(err)
-        os.Exit(1)
+        log.Fatal(err)
     }
 
     handler := http.HandlerFunc(example)
