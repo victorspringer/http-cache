@@ -353,3 +353,32 @@ func TestStorageEvict(t *testing.T) {
 		}
 	}
 }
+
+func TestSetResponseLargerThanMaxCacheSize(t *testing.T) {
+	maxStorageSize := 100
+	a := &Adapter{
+		mutex:     sync.RWMutex{},
+		capacity:  10,
+		algorithm: LRU,
+		store:     make(map[uint64][]byte),
+		storage: storageControl{
+			max: maxStorageSize,
+		},
+	}
+
+	largeResponse := make([]byte, maxStorageSize+50)
+	for i := range largeResponse {
+		largeResponse[i] = 'X'
+	}
+
+	key := uint64(12345)
+	a.Set(key, largeResponse, time.Now().Add(1*time.Minute))
+
+	if len(a.store) != 0 {
+		t.Errorf("expected cache to be empty after attempting to set response larger than max cache size, but got %d items", len(a.store))
+	}
+
+	if a.storage.cur != 0 {
+		t.Errorf("expected storage current size to be 0, but got %d", a.storage.cur)
+	}
+}

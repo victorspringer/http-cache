@@ -80,6 +80,10 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
+	if len(response) > a.storage.max && a.storage.active() {
+		// response too large to cache
+		return
+	}
 	if _, ok := a.store[key]; ok {
 		// Known key, overwrite previous item.
 		a.store[key] = response
@@ -93,7 +97,9 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 
 	// now evict based on storage
 	for a.storage.shouldEvict(len(response)) {
-		a.evict()
+		if !a.evict() {
+			break // nothing was evicted, break to avoid infinite loop
+		}
 	}
 
 	a.store[key] = response
@@ -120,7 +126,7 @@ func (a *Adapter) Release(key uint64) {
 
 // evict removes a single entry from the store. It assumes that the caller holds
 // the write lock.
-func (a *Adapter) evict() {
+func (a *Adapter) evict() (hit bool) {
 	selectedKey := uint64(0)
 	lastAccess := time.Now()
 	frequency := 2147483647
@@ -132,7 +138,6 @@ func (a *Adapter) evict() {
 	}
 
 	var sz int
-	var hit bool
 	for k, v := range a.store {
 		r := cache.BytesToResponse(v)
 		switch a.algorithm {
@@ -166,8 +171,9 @@ func (a *Adapter) evict() {
 
 	if hit {
 		a.storage.del(sz)
+		delete(a.store, selectedKey)
 	}
-	delete(a.store, selectedKey)
+	return
 }
 
 // NewAdapter initializes memory adapter.
