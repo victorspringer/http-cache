@@ -96,7 +96,9 @@ if err := cacheClient.Drop(req); err != nil {
 ```
 
 ### PURGE requests
-`PURGE` support is opt-in so existing applications that already handle `PURGE` keep working as before. Authentication should be handled by your application or middleware stack.
+`PURGE` support is opt-in so existing applications that already handle `PURGE` keep working as before.
+
+> **Authentication is your responsibility.** This middleware does **not** authenticate `PURGE` requests; any caller that can reach the endpoint can flush cache entries. The same applies to `ClientWithRefreshKey` — any query string carrying the configured key will release the matching entry. Place an auth middleware (basic auth, signed token, source-IP allowlist, etc.) in front of the cache middleware before exposing either feature on a public surface.
 
 ```go
 cacheClient, err := cache.NewClient(
@@ -106,7 +108,7 @@ cacheClient, err := cache.NewClient(
 )
 ```
 
-When enabled, a matching `PURGE` request releases the cached response and returns `204 No Content`.
+When enabled, a matching `PURGE` request releases the cached response and returns `204 No Content`. For endpoints cached by `POST` body, send the `PURGE` request with the same body so the cache keys match.
 
 ### Observability
 Use `ClientWithObserver` to receive cache middleware events. The event includes the request, cache key, event type and status code when available.
@@ -136,6 +138,39 @@ Available event types are `hit`, `miss`, `stale`, `refresh`, `store` and `purge`
 - `ClientWithSkipCacheResponseHeader` skips storage when a response includes a configured header.
 - `ClientWithSkipCacheURIPathRegex` skips lookup and storage for matching URL paths.
 - `ClientWithExpiresHeader` writes the cached response expiration as an `Expires` header.
+- `ClientWithMaxBodySize(n)` caps the response body bytes the middleware will buffer and cache. Responses larger than `n` are still streamed to the client untouched, but their buffered copy is dropped and the entry is not stored. Recommended for any endpoint that can emit large payloads (downloads, streaming responses).
+
+### Cache stampede protection
+`ClientWithSingleflight` coalesces concurrent misses for the same cache key so the origin handler runs only once per stampede. All concurrent callers receive the same response. Disabled by default — opt in if your origin is expensive enough that an N-way concurrent miss is a real concern.
+
+```go
+cacheClient, err := cache.NewClient(
+    cache.ClientWithAdapter(memcached),
+    cache.ClientWithTTL(10 * time.Minute),
+    cache.ClientWithSingleflight(),
+)
+```
+
+### Respecting Cache-Control
+`ClientWithRespectCacheControl` makes the middleware honor a useful subset of [RFC 7234](https://www.rfc-editor.org/rfc/rfc7234):
+
+- Request `Cache-Control: no-store` → bypass the cache entirely (no lookup, no store).
+- Request `Cache-Control: no-cache` → skip the lookup; the handler runs against the origin and the response is still stored.
+- Response `Cache-Control: no-store`, `no-cache`, or `private` → do not store the response (shared-cache semantics).
+- Response `Cache-Control: s-maxage=N` / `max-age=N` → override the client default TTL for this single response (`s-maxage` wins).
+
+Unknown directives are intentionally ignored, so any extension your application emits keeps its existing behavior.
+
+### Stale-while-revalidate
+`ClientWithStaleWhileRevalidate(window)` implements [RFC 5861](https://www.rfc-editor.org/rfc/rfc5861) stale-while-revalidate. An expired entry whose age is no greater than `window` is served from cache immediately while a single background goroutine refreshes it. Concurrent stale hits coalesce to one origin call. The refresh outlives the triggering request, so a client disconnect does not abort the refill.
+
+```go
+cacheClient, err := cache.NewClient(
+    cache.ClientWithAdapter(memcached),
+    cache.ClientWithTTL(1 * time.Minute),
+    cache.ClientWithStaleWhileRevalidate(10 * time.Second),
+)
+```
 
 ## Benchmarks
 The benchmarks were based on [allegro/bigcache](https://github.com/allegro/bigcache) tests and used to compare it with the http-cache memory adapter.<br>
@@ -173,8 +208,6 @@ GC pause for bigcache:  7.43339ms
 http-cache memory adapter takes way less GC pause time, that means smaller GC overhead.
 
 ## Roadmap
-- Make it compliant with RFC7234
-- Add more middleware configuration (cacheable status codes, paths etc)
 - Develop gRPC middleware
 - Develop Badger adapter
 - Develop DynamoDB adapter

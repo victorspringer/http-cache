@@ -11,12 +11,28 @@ import (
 
 var a cache.Adapter
 
+// requireRedis probes the configured Redis instance by writing and
+// reading back a unique key. If the round-trip fails, the test is
+// skipped instead of erroring out — Redis is an integration dependency
+// and the absence of a local server should not produce a failing test
+// suite.
+func requireRedis(t *testing.T, adapter cache.Adapter) {
+	t.Helper()
+	probe := uint64(time.Now().UnixNano())
+	adapter.Set(probe, []byte("probe"), time.Now().Add(1*time.Minute))
+	if _, ok := adapter.Get(probe); !ok {
+		t.Skip("redis not reachable on :6379; skipping integration test")
+	}
+	adapter.Release(probe)
+}
+
 func TestSet(t *testing.T) {
 	a = NewAdapter(&RingOptions{
 		Addrs: map[string]string{
 			"server": ":6379",
 		},
 	})
+	requireRedis(t, a)
 
 	tests := []struct {
 		name     string
@@ -56,6 +72,10 @@ func TestSet(t *testing.T) {
 }
 
 func TestGet(t *testing.T) {
+	if a == nil {
+		t.Skip("redis adapter was not initialized (TestSet skipped); skipping")
+	}
+	requireRedis(t, a)
 	tests := []struct {
 		name string
 		key  uint64
@@ -134,6 +154,7 @@ func TestExpiration(t *testing.T) {
 			"server": ":6379",
 		},
 	})
+	requireRedis(t, a)
 
 	t.Run("sets response without expiration", func(t *testing.T) {
 		key := uint64(10)
@@ -165,6 +186,7 @@ func TestNewAdapterWithClient(t *testing.T) {
 	defer client.Close()
 
 	adapter := NewAdapterWithClient(client)
+	requireRedis(t, adapter)
 	key := uint64(20)
 	response := cache.Response{
 		Value: []byte("standalone client"),

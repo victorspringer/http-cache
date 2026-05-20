@@ -21,7 +21,9 @@ install:
 
 script:
   - go vet ./...
-  - go test -cover -race -v -covermode=atomic -coverprofile=coverage.out ./...
+  # -count=2 catches flaky races that only surface on the second run
+  # (one-shot lazy initializations, package-level state mutation, etc).
+  - go test -cover -race -count=2 -v -covermode=atomic -coverprofile=coverage.out ./...
 
 after_success:
   - if [ -n "$COVERALLS_TOKEN" ]; then goveralls -coverprofile=coverage.out -service=travis-ci -repotoken "$COVERALLS_TOKEN"; else echo "COVERALLS_TOKEN is not set; skipping Coveralls upload"; fi
