@@ -21,9 +21,8 @@ package main
 import (
     "log"
     "net/http"
-    "os"
     "time"
-    
+
     "github.com/victorspringer/http-cache"
     "github.com/victorspringer/http-cache/adapter/memory"
 )
@@ -80,8 +79,66 @@ import (
 ...
 ```
 
+## Optional Features
+
+### Programmatic invalidation
+Use `Drop` to release the cached response that matches a request. The same cache key rules used by the middleware are applied, including normalized query params, POST bodies and configured vary headers.
+
+```go
+req, err := http.NewRequest(http.MethodGet, "https://example.com/products?page=1", nil)
+if err != nil {
+    log.Fatal(err)
+}
+
+if err := cacheClient.Drop(req); err != nil {
+    log.Fatal(err)
+}
+```
+
+### PURGE requests
+`PURGE` support is opt-in so existing applications that already handle `PURGE` keep working as before. Authentication should be handled by your application or middleware stack.
+
+```go
+cacheClient, err := cache.NewClient(
+    cache.ClientWithAdapter(memcached),
+    cache.ClientWithTTL(10 * time.Minute),
+    cache.ClientWithPurge(),
+)
+```
+
+When enabled, a matching `PURGE` request releases the cached response and returns `204 No Content`.
+
+### Observability
+Use `ClientWithObserver` to receive cache middleware events. The event includes the request, cache key, event type and status code when available.
+
+```go
+cacheClient, err := cache.NewClient(
+    cache.ClientWithAdapter(memcached),
+    cache.ClientWithTTL(10 * time.Minute),
+    cache.ClientWithObserver(func(event cache.CacheEvent) {
+        log.Printf("cache event=%s key=%d status=%d path=%s",
+            event.Type,
+            event.Key,
+            event.StatusCode,
+            event.Request.URL.Path,
+        )
+    }),
+)
+```
+
+Available event types are `hit`, `miss`, `stale`, `refresh`, `store` and `purge`.
+
+### Cache key and storage options
+
+- `ClientWithMethods` enables caching for `GET` and/or `POST` requests.
+- `ClientWithVaryHeaders` includes selected request headers in the cache key.
+- `ClientWithStatusCodeFilter` controls which response status codes can be cached.
+- `ClientWithSkipCacheResponseHeader` skips storage when a response includes a configured header.
+- `ClientWithSkipCacheURIPathRegex` skips lookup and storage for matching URL paths.
+- `ClientWithExpiresHeader` writes the cached response expiration as an `Expires` header.
+
 ## Benchmarks
-The benchmarks were based on [allegro/bigache](https://github.com/allegro/bigcache) tests and used to compare it with the http-cache memory adapter.<br>
+The benchmarks were based on [allegro/bigcache](https://github.com/allegro/bigcache) tests and used to compare it with the http-cache memory adapter.<br>
 The tests were run using an Intel i5-2410M with 8GB RAM on Arch Linux 64bits.<br>
 The results are shown below:
 
