@@ -481,6 +481,47 @@ func TestMiddlewareVariesCacheByRequestHeader(t *testing.T) {
 	}
 }
 
+func TestMiddlewareCachesWithoutExpiration(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/no-expiration", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if got, want := w.Body.String(), "value 1"; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+
+	if counter != 1 {
+		t.Fatalf("handler called %d times, want 1", counter)
+	}
+
+	stored, ok := adapter.Get(generateKey("http://foo.bar/no-expiration"))
+	if !ok {
+		t.Fatal("response was not cached")
+	}
+	if expiration := BytesToResponse(stored).Expiration; !expiration.IsZero() {
+		t.Fatalf("expiration = %v, want zero time", expiration)
+	}
+}
+
 func TestBytesToResponse(t *testing.T) {
 	r := Response{
 		Value:      []byte("value 1"),
@@ -668,6 +709,7 @@ func TestNewClient(t *testing.T) {
 			&Client{
 				adapter:    adapter,
 				ttl:        1 * time.Millisecond,
+				ttlSet:     true,
 				refreshKey: "",
 				methods:    []string{http.MethodGet, http.MethodPost},
 			},
@@ -683,6 +725,7 @@ func TestNewClient(t *testing.T) {
 			&Client{
 				adapter:    adapter,
 				ttl:        1 * time.Millisecond,
+				ttlSet:     true,
 				refreshKey: "rk",
 				methods:    []string{http.MethodGet},
 			},
@@ -706,10 +749,26 @@ func TestNewClient(t *testing.T) {
 			true,
 		},
 		{
-			"returns error",
+			"returns new client without expiration",
 			[]ClientOption{
 				ClientWithAdapter(adapter),
 				ClientWithTTL(0),
+				ClientWithRefreshKey("rk"),
+			},
+			&Client{
+				adapter:    adapter,
+				ttl:        0,
+				refreshKey: "rk",
+				methods:    []string{http.MethodGet},
+				ttlSet:     true,
+			},
+			false,
+		},
+		{
+			"returns error",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(-1 * time.Millisecond),
 				ClientWithRefreshKey("rk"),
 			},
 			nil,

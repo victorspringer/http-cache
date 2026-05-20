@@ -67,6 +67,7 @@ type Response struct {
 type Client struct {
 	adapter            Adapter
 	ttl                time.Duration
+	ttlSet             bool
 	refreshKey         string
 	methods            []string
 	skipCacheHeader    string
@@ -122,13 +123,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				b, ok := c.adapter.Get(key)
 				if ok {
 					response := BytesToResponse(b)
-					if response.Expiration.After(time.Now()) {
+					if response.Valid() {
 						response.LastAccess = time.Now()
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
 						writeHeader(w.Header(), response.Header)
-						if c.writeExpiresHeader {
+						if c.writeExpiresHeader && !response.Expiration.IsZero() {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
 						}
 						if statusCode := cachedStatusCode(response.Header); statusCode > 0 {
@@ -148,7 +149,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			statusCode := rw.statusCodeValue()
 			value := rw.body.Bytes()
 			now := time.Now()
-			expires := now.Add(c.ttl)
+			expires := time.Time{}
+			if c.ttl > 0 {
+				expires = now.Add(c.ttl)
+			}
 			if c.cacheableResponse(rw, statusCode) {
 				response := Response{
 					Value:      value,
@@ -238,6 +242,11 @@ func BytesToResponse(b []byte) Response {
 	dec.Decode(&r)
 
 	return r
+}
+
+// Valid returns whether the response can still be served from cache.
+func (r Response) Valid() bool {
+	return r.Expiration.IsZero() || r.Expiration.After(time.Now())
 }
 
 // Bytes converts Response data structure into bytes array.
@@ -333,7 +342,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	if c.adapter == nil {
 		return nil, errors.New("cache client adapter is not set")
 	}
-	if int64(c.ttl) < 1 {
+	if !c.ttlSet {
 		return nil, errors.New("cache client ttl is not set")
 	}
 	if c.methods == nil {
@@ -360,11 +369,12 @@ func ClientWithAdapter(a Adapter) ClientOption {
 // ClientWithTTL sets how long each response is going to be cached.
 func ClientWithTTL(ttl time.Duration) ClientOption {
 	return func(c *Client) error {
-		if int64(ttl) < 1 {
+		if int64(ttl) < 0 {
 			return fmt.Errorf("cache client ttl %v is invalid", ttl)
 		}
 
 		c.ttl = ttl
+		c.ttlSet = true
 
 		return nil
 	}

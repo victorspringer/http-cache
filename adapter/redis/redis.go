@@ -53,10 +53,15 @@ func (a *Adapter) Get(key uint64) ([]byte, bool) {
 
 // Set implements the cache Adapter interface Set method.
 func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
+	duration := time.Duration(0)
+	if !expiration.IsZero() {
+		duration = expiration.Sub(time.Now())
+	}
+
 	a.store.Set(&redisCache.Item{
 		Key:        cache.KeyAsString(key),
 		Object:     response,
-		Expiration: expiration.Sub(time.Now()),
+		Expiration: duration,
 	})
 }
 

@@ -126,3 +126,33 @@ func TestRelease(t *testing.T) {
 		})
 	}
 }
+
+func TestExpiration(t *testing.T) {
+	a = NewAdapter(&RingOptions{
+		Addrs: map[string]string{
+			"server": ":6379",
+		},
+	})
+
+	t.Run("sets response without expiration", func(t *testing.T) {
+		key := uint64(10)
+		response := cache.Response{
+			Value: []byte("no expiration"),
+		}.Bytes()
+
+		a.Set(key, response, time.Time{})
+		t.Cleanup(func() {
+			a.Release(key)
+		})
+
+		b, ok := a.Get(key)
+		if !ok {
+			t.Fatal("response was not cached")
+		}
+
+		got := cache.BytesToResponse(b).Value
+		if !reflect.DeepEqual(got, []byte("no expiration")) {
+			t.Fatalf("memory.Get() = %v, want %v", string(got), "no expiration")
+		}
+	})
+}
