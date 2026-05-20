@@ -631,6 +631,160 @@ func TestMiddlewareObserverReportsStaleAndRefresh(t *testing.T) {
 	}
 }
 
+func TestMiddlewarePassesPurgeThroughByDefault(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{
+			generateKey("http://foo.bar/purge"): Response{
+				Value:      []byte("cached"),
+				Expiration: time.Now().Add(1 * time.Minute),
+			}.Bytes(),
+		},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte("passed through"))
+	}))
+
+	r := httptest.NewRequest("PURGE", "http://foo.bar/purge", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusAccepted)
+	}
+	if got, want := w.Body.String(), "passed through"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	if _, ok := adapter.Get(generateKey("http://foo.bar/purge")); !ok {
+		t.Fatal("response was purged without ClientWithPurge")
+	}
+}
+
+func TestMiddlewarePurgeReleasesCachedResponse(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithPurge(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "http://foo.bar/purge?b=2&a=1", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 1"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+
+	r = httptest.NewRequest("PURGE", "http://foo.bar/purge?a=1&b=2", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if got := w.Body.String(); got != "" {
+		t.Fatalf("body = %q, want empty", got)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/purge?b=2&a=1", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 2"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestMiddlewarePurgeUsesVaryHeadersAndObserver(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+
+	var events []CacheEvent
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithPurge(),
+		ClientWithVaryHeaders([]string{"X-Country"}),
+		ClientWithObserver(func(event CacheEvent) {
+			events = append(events, event)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("%s %d", r.Header.Get("X-Country"), counter)))
+	}))
+
+	for _, country := range []string{"BR", "US"} {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/purge-vary", nil)
+		r.Header.Set("X-Country", country)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+	}
+
+	r := httptest.NewRequest("PURGE", "http://foo.bar/purge-vary", nil)
+	r.Header.Set("X-Country", "BR")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusNoContent)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/purge-vary", nil)
+	r.Header.Set("X-Country", "BR")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "BR 3"; got != want {
+		t.Fatalf("BR body = %q, want %q", got, want)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/purge-vary", nil)
+	r.Header.Set("X-Country", "US")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "US 2"; got != want {
+		t.Fatalf("US body = %q, want %q", got, want)
+	}
+
+	var foundPurge bool
+	for _, event := range events {
+		if event.Type == CacheEventPurge {
+			foundPurge = true
+			if event.Request.Header.Get("X-Country") != "BR" {
+				t.Fatalf("purge event country = %q, want BR", event.Request.Header.Get("X-Country"))
+			}
+			if event.StatusCode != http.StatusNoContent {
+				t.Fatalf("purge event status code = %d, want %d", event.StatusCode, http.StatusNoContent)
+			}
+		}
+	}
+	if !foundPurge {
+		t.Fatal("purge event was not observed")
+	}
+}
+
 func TestDropReleasesCachedResponse(t *testing.T) {
 	adapter := &adapterMock{
 		store: map[uint64][]byte{},

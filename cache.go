@@ -43,6 +43,8 @@ import (
 
 const cacheStatusCodeHeader = "Http-Cache-Status-Code"
 
+const methodPurge = "PURGE"
+
 // CacheEventType identifies an observed cache middleware event.
 type CacheEventType string
 
@@ -61,6 +63,9 @@ const (
 
 	// CacheEventStore means a response was stored in cache.
 	CacheEventStore CacheEventType = "store"
+
+	// CacheEventPurge means a cached response was explicitly purged.
+	CacheEventPurge CacheEventType = "purge"
 )
 
 // CacheEvent is passed to an observer when cache middleware events happen.
@@ -107,6 +112,7 @@ type Client struct {
 	statusCodeFilter   func(int) bool
 	writeExpiresHeader bool
 	observer           Observer
+	purgeEnabled       bool
 }
 
 // ClientOption is used to set Client settings.
@@ -128,6 +134,19 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.purgeEnabled && r.Method == methodPurge && c.cacheableURIPath(r.URL) {
+			key, err := c.key(r)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			c.adapter.Release(key)
+			c.observe(CacheEventPurge, r, key, http.StatusNoContent)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		if c.cacheableMethod(r.Method) && c.cacheableURIPath(r.URL) {
 			key, err := c.key(r)
 			if err != nil {
@@ -531,6 +550,15 @@ func ClientWithObserver(observer Observer) ClientOption {
 			return errors.New("cache client observer is not set")
 		}
 		c.observer = observer
+		return nil
+	}
+}
+
+// ClientWithPurge enables handling PURGE requests by releasing matching cache entries.
+// Optional setting.
+func ClientWithPurge() ClientOption {
+	return func(c *Client) error {
+		c.purgeEnabled = true
 		return nil
 	}
 }
