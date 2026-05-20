@@ -41,6 +41,8 @@ import (
 	"time"
 )
 
+const cacheStatusCodeHeader = "Http-Cache-Status-Code"
+
 // Response is the cached response data structure.
 type Response struct {
 	// Value is the cached response value.
@@ -48,9 +50,6 @@ type Response struct {
 
 	// Header is the cached response header.
 	Header http.Header
-
-	// StatusCode is the cached response status code.
-	StatusCode int
 
 	// Expiration is the cached response expiration date.
 	Expiration time.Time
@@ -128,14 +127,12 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
-						for k, v := range response.Header {
-							w.Header().Set(k, strings.Join(v, ","))
-						}
+						writeHeader(w.Header(), response.Header)
 						if c.writeExpiresHeader {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
 						}
-						if response.StatusCode > 0 {
-							w.WriteHeader(response.StatusCode)
+						if statusCode := cachedStatusCode(response.Header); statusCode > 0 {
+							w.WriteHeader(statusCode)
 						}
 						w.Write(response.Value)
 						return
@@ -145,7 +142,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 			}
 
-			rw := &responseWriter{ResponseWriter: w}
+			rw := newResponseWriter(w)
 			next.ServeHTTP(rw, r)
 
 			statusCode := rw.statusCodeValue()
@@ -155,8 +152,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			if c.cacheableResponse(rw, statusCode) {
 				response := Response{
 					Value:      value,
-					Header:     rw.Header(),
-					StatusCode: statusCode,
+					Header:     cacheHeader(rw.Header(), statusCode),
 					Expiration: expires,
 					LastAccess: now,
 					Frequency:  1,
@@ -195,6 +191,44 @@ func (c *Client) cacheableURIPath(URL *url.URL) bool {
 		return true
 	}
 	return !c.skipCachePathRegex.MatchString(URL.Path)
+}
+
+func cacheHeader(header http.Header, statusCode int) http.Header {
+	cachedHeader := cloneHeader(header)
+	cachedHeader.Del(cacheStatusCodeHeader)
+	if statusCode != http.StatusOK {
+		cachedHeader.Set(cacheStatusCodeHeader, strconv.Itoa(statusCode))
+	}
+	return cachedHeader
+}
+
+func cachedStatusCode(header http.Header) int {
+	statusCode := header.Get(cacheStatusCodeHeader)
+	if statusCode == "" {
+		return http.StatusOK
+	}
+	code, err := strconv.Atoi(statusCode)
+	if err != nil || code < 100 {
+		return http.StatusOK
+	}
+	return code
+}
+
+func cloneHeader(header http.Header) http.Header {
+	cloned := make(http.Header, len(header))
+	for k, values := range header {
+		cloned[k] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func writeHeader(dst http.Header, src http.Header) {
+	for k, values := range src {
+		if k == cacheStatusCodeHeader {
+			continue
+		}
+		dst.Set(k, strings.Join(values, ","))
+	}
 }
 
 // BytesToResponse converts bytes array into Response data structure.
@@ -410,6 +444,18 @@ type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
 	body       bytes.Buffer
+	header     http.Header
+}
+
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		header:         make(http.Header),
+	}
+}
+
+func (w *responseWriter) Header() http.Header {
+	return w.header
 }
 
 func (w *responseWriter) WriteHeader(statusCode int) {
@@ -417,6 +463,7 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 		return
 	}
 	w.statusCode = statusCode
+	writeHeader(w.ResponseWriter.Header(), w.header)
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -425,6 +472,7 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 		w.statusCode = http.StatusOK
 	}
 	w.body.Write(b)
+	writeHeader(w.ResponseWriter.Header(), w.header)
 	return w.ResponseWriter.Write(b)
 }
 

@@ -21,6 +21,15 @@ type adapterMock struct {
 
 type errReader int
 
+type encodingWriter struct {
+	http.ResponseWriter
+}
+
+func (w encodingWriter) Write(b []byte) (int, error) {
+	w.Header().Set("Content-Encoding", "gzip")
+	return w.ResponseWriter.Write(b)
+}
+
 func (a *adapterMock) Get(key uint64) ([]byte, bool) {
 	a.Lock()
 	defer a.Unlock()
@@ -330,6 +339,44 @@ func TestMiddlewareStatusCodeFilter(t *testing.T) {
 
 	if counter != 1 {
 		t.Fatalf("handler called %d times, want 1", counter)
+	}
+}
+
+func TestMiddlewareDoesNotCacheOuterWriterHeaders(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("value"))
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "http://foo.bar/outer-headers", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(encodingWriter{ResponseWriter: w}, r)
+
+	if got := w.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("first response Content-Encoding = %q, want gzip", got)
+	}
+
+	stored, ok := adapter.Get(generateKey("http://foo.bar/outer-headers"))
+	if !ok {
+		t.Fatal("response was not cached")
+	}
+	response := BytesToResponse(stored)
+	if got := response.Header.Get("Content-Type"); got != "text/plain" {
+		t.Fatalf("cached Content-Type = %q, want text/plain", got)
+	}
+	if got := response.Header.Get("Content-Encoding"); got != "" {
+		t.Fatalf("cached Content-Encoding = %q, want empty", got)
 	}
 }
 
