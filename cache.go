@@ -287,6 +287,13 @@ func (c *Client) Drop(r *http.Request) error {
 }
 
 func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
+	if !rw.wrote {
+		// Handlers that return without calling Write or WriteHeader
+		// (early error returns, hijacked connections, abandoned RPCs)
+		// would otherwise be cached as an empty 200 OK response and
+		// served back to every subsequent request.
+		return false
+	}
 	if rw.exceeded {
 		return false
 	}
@@ -711,6 +718,7 @@ type responseWriter struct {
 	header      http.Header
 	maxBodySize int
 	exceeded    bool
+	wrote       bool
 }
 
 func newResponseWriter(w http.ResponseWriter, maxBodySize int) *responseWriter {
@@ -730,6 +738,7 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 		return
 	}
 	w.statusCode = statusCode
+	w.wrote = true
 	writeHeader(w.ResponseWriter.Header(), w.header)
 	w.ResponseWriter.WriteHeader(statusCode)
 }
@@ -738,6 +747,7 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
+	w.wrote = true
 	if !w.exceeded {
 		if w.maxBodySize > 0 && w.body.Len()+len(b) > w.maxBodySize {
 			// Stop buffering and free the partially-buffered copy so an
