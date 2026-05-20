@@ -26,6 +26,7 @@ package cache
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -96,6 +97,15 @@ type Response struct {
 	// Frequency is the count of times a cached response is accessed.
 	// Used for LFU and MFU algorithms.
 	Frequency int
+
+	// CanonicalKey is a fingerprint of the request inputs (URL, vary
+	// headers and body) that produced this entry. The middleware
+	// compares it against the incoming request on every hit so an
+	// FNV-64 collision (or a manually corrupted entry) cannot serve
+	// one client's response to another. Entries written by older
+	// versions of this package have an empty CanonicalKey and bypass
+	// verification for backward compatibility.
+	CanonicalKey []byte
 }
 
 // Client data structure for HTTP cache middleware.
@@ -145,7 +155,7 @@ type AdapterTouch interface {
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c.purgeEnabled && r.Method == methodPurge && c.cacheableURIPath(r.URL) {
-			key, err := c.key(r)
+			key, _, err := c.key(r)
 			if err != nil {
 				next.ServeHTTP(w, r)
 				return
@@ -158,7 +168,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		}
 
 		if c.cacheableMethod(r.Method) && c.cacheableURIPath(r.URL) {
-			key, err := c.key(r)
+			key, fingerprint, err := c.key(r)
 			if err != nil {
 				next.ServeHTTP(w, r)
 				return
@@ -174,7 +184,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				if _, ok := params[c.refreshKey]; ok {
 					delete(params, c.refreshKey)
 					r.URL.RawQuery = params.Encode()
-					key, err = c.key(r)
+					key, fingerprint, err = c.key(r)
 					if err != nil {
 						next.ServeHTTP(w, r)
 						return
@@ -196,6 +206,12 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					case decodeErr != nil:
 						// Corrupted or version-skewed entry: drop it and
 						// fall through to the origin as a miss.
+						c.adapter.Release(key)
+						c.observe(CacheEventMiss, r, key, 0)
+					case !canonicalKeyMatches(response.CanonicalKey, fingerprint):
+						// FNV-64 collision (or corrupted entry from a
+						// different logical request): release the stored
+						// blob and serve a fresh response.
 						c.adapter.Release(key)
 						c.observe(CacheEventMiss, r, key, 0)
 					case response.Valid():
@@ -241,11 +257,12 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			}
 			if c.cacheableResponse(rw, statusCode) {
 				response := Response{
-					Value:      value,
-					Header:     cacheHeader(rw.Header(), statusCode),
-					Expiration: expires,
-					LastAccess: now,
-					Frequency:  1,
+					Value:        value,
+					Header:       cacheHeader(rw.Header(), statusCode),
+					Expiration:   expires,
+					LastAccess:   now,
+					Frequency:    1,
+					CanonicalKey: fingerprint,
 				}
 				c.adapter.Set(key, response.Bytes(), response.Expiration)
 				c.observe(CacheEventStore, r, key, statusCode)
@@ -260,7 +277,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 // Drop releases the cache entry matching the given request.
 func (c *Client) Drop(r *http.Request) error {
-	key, err := c.key(r)
+	key, _, err := c.key(r)
 	if err != nil {
 		return err
 	}
@@ -294,20 +311,60 @@ func (c *Client) cacheableURIPath(URL *url.URL) bool {
 	return !c.skipCachePathRegex.MatchString(URL.Path)
 }
 
-func (c *Client) key(r *http.Request) (uint64, error) {
+func (c *Client) key(r *http.Request) (uint64, []byte, error) {
 	sortURLParams(r.URL)
 	if r.Method != http.MethodPost || r.Body == nil {
-		return generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders), nil
+		urlStr := r.URL.String()
+		return generateKeyWithHeaders(urlStr, r.Header, c.varyHeaders),
+			canonicalFingerprint(urlStr, nil, r.Header, c.varyHeaders),
+			nil
 	}
 
 	body, err := io.ReadAll(r.Body)
 	r.Body.Close()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
-	return generateKeyWithBodyAndHeaders(r.URL.String(), body, r.Header, c.varyHeaders), nil
+	urlStr := r.URL.String()
+	return generateKeyWithBodyAndHeaders(urlStr, body, r.Header, c.varyHeaders),
+		canonicalFingerprint(urlStr, body, r.Header, c.varyHeaders),
+		nil
+}
+
+// canonicalKeyMatches returns true when the stored canonical key matches
+// the incoming request's fingerprint. An empty stored key (entries
+// written by older versions of this package) bypasses verification to
+// preserve backward compatibility with persistent caches.
+func canonicalKeyMatches(stored, fingerprint []byte) bool {
+	if len(stored) == 0 {
+		return true
+	}
+	return bytes.Equal(stored, fingerprint)
+}
+
+// canonicalFingerprint hashes the request inputs that go into the cache
+// key with SHA-256. The middleware stores the fingerprint with each
+// cached response and verifies it on every hit so an FNV-64 collision
+// cannot serve one request's response to another.
+func canonicalFingerprint(URL string, body []byte, headers http.Header, varyHeaders []string) []byte {
+	h := sha256.New()
+	h.Write([]byte(URL))
+	for _, name := range varyHeaders {
+		canonName := http.CanonicalHeaderKey(name)
+		h.Write([]byte{0})
+		h.Write([]byte(canonName))
+		for _, v := range headers.Values(canonName) {
+			h.Write([]byte{0})
+			h.Write([]byte(v))
+		}
+	}
+	if len(body) > 0 {
+		h.Write([]byte{0})
+		h.Write(body)
+	}
+	return h.Sum(nil)
 }
 
 func (c *Client) observe(eventType CacheEventType, r *http.Request, key uint64, statusCode int) {
