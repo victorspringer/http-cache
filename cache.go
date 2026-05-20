@@ -38,6 +38,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -126,6 +127,7 @@ type Client struct {
 	purgeEnabled        bool
 	maxBodySize         int
 	singleflightEnabled bool
+	respectCacheControl bool
 	sf                  singleflightGroup
 }
 
@@ -172,6 +174,19 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		}
 
 		if c.cacheableMethod(r.Method) && c.cacheableURIPath(r.URL) {
+			// Honor request-side Cache-Control when opted in. no-store
+			// short-circuits both the lookup and the store paths; no-cache
+			// only skips the lookup so the handler runs against the
+			// origin while the response can still be stored.
+			var reqCC cacheControl
+			if c.respectCacheControl {
+				reqCC = parseCacheControl(r.Header.Get("Cache-Control"))
+				if reqCC.noStore {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
 			key, fingerprint, err := c.key(r)
 			if err != nil {
 				next.ServeHTTP(w, r)
@@ -199,7 +214,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					refreshed = true
 				}
 			}
-			if !refreshed {
+			if !refreshed && !reqCC.noCache {
 				b, ok := c.adapter.Get(key)
 				switch {
 				case !ok:
@@ -261,9 +276,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					statusCode := cw.statusCodeValue()
 					if c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
 						now := time.Now()
+						ttl := c.responseTTL(cw.header)
 						expires := time.Time{}
-						if c.ttl > 0 {
-							expires = now.Add(c.ttl)
+						if ttl > 0 {
+							expires = now.Add(ttl)
 						}
 						response := Response{
 							Value:        cw.body.Bytes(),
@@ -289,9 +305,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			statusCode := rw.statusCodeValue()
 			value := rw.body.Bytes()
 			now := time.Now()
+			ttl := c.responseTTL(rw.Header())
 			expires := time.Time{}
-			if c.ttl > 0 {
-				expires = now.Add(c.ttl)
+			if ttl > 0 {
+				expires = now.Add(ttl)
 			}
 			if c.cacheableResponse(rw, statusCode) {
 				response := Response{
@@ -365,10 +382,83 @@ func (c *Client) cacheableSnapshot(header http.Header, wrote, exceeded bool, sta
 	if !c.statusCodeFilter(statusCode) {
 		return false
 	}
+	if c.respectCacheControl {
+		cc := parseCacheControl(header.Get("Cache-Control"))
+		if cc.noStore || cc.noCache || cc.private {
+			return false
+		}
+	}
 	if c.skipCacheHeader == "" {
 		return true
 	}
 	return header.Get(c.skipCacheHeader) == ""
+}
+
+// responseTTL returns the duration the middleware should keep this
+// response cached. When ClientWithRespectCacheControl is enabled the
+// response's s-maxage / max-age override the client default.
+func (c *Client) responseTTL(header http.Header) time.Duration {
+	if c.respectCacheControl {
+		cc := parseCacheControl(header.Get("Cache-Control"))
+		if cc.hasSMaxAge {
+			return cc.sMaxAge
+		}
+		if cc.hasMaxAge {
+			return cc.maxAge
+		}
+	}
+	return c.ttl
+}
+
+// cacheControl is a tiny subset of RFC 7234 directives recognized by
+// ClientWithRespectCacheControl. Unknown directives are intentionally
+// ignored so this stays a behavior-preserving opt-in.
+type cacheControl struct {
+	noStore    bool
+	noCache    bool
+	private    bool
+	maxAge     time.Duration
+	hasMaxAge  bool
+	sMaxAge    time.Duration
+	hasSMaxAge bool
+}
+
+func parseCacheControl(h string) cacheControl {
+	var cc cacheControl
+	if h == "" {
+		return cc
+	}
+	for _, raw := range strings.Split(h, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(raw, "=")
+		name = strings.ToLower(strings.TrimSpace(name))
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = value[1 : len(value)-1]
+		}
+		switch name {
+		case "no-store":
+			cc.noStore = true
+		case "no-cache":
+			cc.noCache = true
+		case "private":
+			cc.private = true
+		case "max-age":
+			if n, err := strconv.Atoi(value); err == nil && n >= 0 {
+				cc.maxAge = time.Duration(n) * time.Second
+				cc.hasMaxAge = true
+			}
+		case "s-maxage":
+			if n, err := strconv.Atoi(value); err == nil && n >= 0 {
+				cc.sMaxAge = time.Duration(n) * time.Second
+				cc.hasSMaxAge = true
+			}
+		}
+	}
+	return cc
 }
 
 func (c *Client) cacheableMethod(method string) bool {
@@ -776,6 +866,29 @@ func ClientWithPurge() ClientOption {
 func ClientWithSingleflight() ClientOption {
 	return func(c *Client) error {
 		c.singleflightEnabled = true
+		return nil
+	}
+}
+
+// ClientWithRespectCacheControl makes the middleware honor a small but
+// useful subset of RFC 7234 Cache-Control directives on both requests
+// and responses:
+//
+//   - Request Cache-Control: no-store -> bypass the cache entirely
+//     (no lookup, no store).
+//   - Request Cache-Control: no-cache -> skip the cache lookup so the
+//     handler always runs, but still store the response.
+//   - Response Cache-Control: no-store, no-cache, or private -> do not
+//     store the response.
+//   - Response Cache-Control: s-maxage=N / max-age=N -> override the
+//     client's default TTL for this response (s-maxage wins, matching
+//     shared-cache semantics).
+//
+// Defaults off so existing applications that emit Cache-Control purely
+// for downstream clients see no behavior change.
+func ClientWithRespectCacheControl() ClientOption {
+	return func(c *Client) error {
+		c.respectCacheControl = true
 		return nil
 	}
 }
