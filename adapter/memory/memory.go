@@ -80,20 +80,25 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	if _, ok := a.store[key]; ok {
-		// Known key, overwrite previous item.
-		a.store[key] = response
+	if old, ok := a.store[key]; ok {
+		delete(a.store, key)
+		a.storage.del(len(old))
+	}
+
+	if !a.storage.canCache(len(response)) {
 		return
 	}
 
 	// New key, make sure we have the capacity.
-	if len(a.store) == a.capacity {
+	if a.capacity > 0 && len(a.store) == a.capacity {
 		a.evict()
 	}
 
 	// now evict based on storage
 	for a.storage.shouldEvict(len(response)) {
-		a.evict()
+		if !a.evict() {
+			return
+		}
 	}
 
 	a.store[key] = response
@@ -102,25 +107,20 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 
 // Release implements the Adapter interface Release method.
 func (a *Adapter) Release(key uint64) {
-	var sz int
-	a.mutex.RLock()
-	b, ok := a.store[key]
-	if ok {
-		sz = len(b)
-	}
-	a.mutex.RUnlock()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 
-	if ok {
-		a.mutex.Lock()
-		delete(a.store, key)
-		a.storage.del(sz)
-		a.mutex.Unlock()
+	b, ok := a.store[key]
+	if !ok {
+		return
 	}
+	delete(a.store, key)
+	a.storage.del(len(b))
 }
 
 // evict removes a single entry from the store. It assumes that the caller holds
 // the write lock.
-func (a *Adapter) evict() {
+func (a *Adapter) evict() bool {
 	selectedKey := uint64(0)
 	lastAccess := time.Now()
 	frequency := 2147483647
@@ -166,8 +166,9 @@ func (a *Adapter) evict() {
 
 	if hit {
 		a.storage.del(sz)
+		delete(a.store, selectedKey)
 	}
-	delete(a.store, selectedKey)
+	return hit
 }
 
 // NewAdapter initializes memory adapter.

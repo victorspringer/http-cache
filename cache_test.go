@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -218,6 +219,218 @@ func TestMiddleware(t *testing.T) {
 				t.Errorf("*Client.Middleware() = %v, want %v", w.Body.String(), tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestMiddlewareCachesMultipleWrites(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte("first "))
+		w.Write([]byte("second"))
+	}))
+
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/multi-write", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if got, want := w.Body.String(), "first second"; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+
+	if counter != 1 {
+		t.Fatalf("handler called %d times, want 1", counter)
+	}
+}
+
+func TestMiddlewareCachesStatusCode(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("created"))
+	}))
+
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/created", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status code = %d, want %d", w.Code, http.StatusCreated)
+		}
+		if got, want := w.Body.String(), "created"; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+
+	if counter != 1 {
+		t.Fatalf("handler called %d times, want 1", counter)
+	}
+}
+
+func TestMiddlewareStatusCodeFilter(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithStatusCodeFilter(func(statusCode int) bool {
+			return statusCode == http.StatusNotFound
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("not found"))
+	}))
+
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/not-found", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("status code = %d, want %d", w.Code, http.StatusNotFound)
+		}
+		if got, want := w.Body.String(), "not found"; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+
+	if counter != 1 {
+		t.Fatalf("handler called %d times, want 1", counter)
+	}
+}
+
+func TestMiddlewareSkipsCacheByResponseHeader(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithSkipCacheResponseHeader("X-Skip-Cache"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Header().Set("X-Skip-Cache", "1")
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	for i := 1; i <= 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/skip-header", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if got, want := w.Body.String(), fmt.Sprintf("value %d", i); got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestMiddlewareSkipsCacheByURIPathRegex(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithSkipCacheURIPathRegex(regexp.MustCompile(`^/skip-path$`)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	for i := 1; i <= 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/skip-path", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if got, want := w.Body.String(), fmt.Sprintf("value %d", i); got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestMiddlewareVariesCacheByRequestHeader(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithVaryHeaders([]string{"X-Country"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("%s %d", r.Header.Get("X-Country"), counter)))
+	}))
+
+	tests := []struct {
+		country string
+		want    string
+	}{
+		{"BR", "BR 1"},
+		{"US", "US 2"},
+		{"BR", "BR 1"},
+	}
+
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodGet, "http://foo.bar/vary", nil)
+		r.Header.Set("X-Country", tt.country)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		if got := w.Body.String(); got != tt.want {
+			t.Fatalf("body = %q, want %q", got, tt.want)
+		}
 	}
 }
 
@@ -465,6 +678,16 @@ func TestNewClient(t *testing.T) {
 			nil,
 			true,
 		},
+		{
+			"returns error",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithStatusCodeFilter(nil),
+			},
+			nil,
+			true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -472,6 +695,9 @@ func TestNewClient(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+			if got != nil {
+				got.statusCodeFilter = nil
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NewClient() = %v, want %v", got, tt.want)

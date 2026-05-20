@@ -353,3 +353,78 @@ func TestStorageEvict(t *testing.T) {
 		}
 	}
 }
+
+func TestSetSkipsResponseLargerThanStorageCapacity(t *testing.T) {
+	a := &Adapter{
+		mutex:     sync.RWMutex{},
+		capacity:  64,
+		algorithm: LRU,
+		store:     map[uint64][]byte{},
+		storage: storageControl{
+			max: 10,
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		a.Set(1, []byte("larger than max storage"), time.Now().Add(1*time.Minute))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Set did not return for response larger than storage capacity")
+	}
+
+	if len(a.store) != 0 {
+		t.Fatalf("store length = %d, want 0", len(a.store))
+	}
+	if a.storage.cur != 0 {
+		t.Fatalf("storage cur = %d, want 0", a.storage.cur)
+	}
+}
+
+func TestSetOverwriteUpdatesStorageSize(t *testing.T) {
+	a := &Adapter{
+		mutex:     sync.RWMutex{},
+		capacity:  64,
+		algorithm: LRU,
+		store:     map[uint64][]byte{},
+		storage: storageControl{
+			max: 100,
+		},
+	}
+
+	a.Set(1, []byte("12345"), time.Now().Add(1*time.Minute))
+	a.Set(1, []byte("1234567890"), time.Now().Add(1*time.Minute))
+
+	if a.storage.cur != 10 {
+		t.Fatalf("storage cur = %d, want 10", a.storage.cur)
+	}
+	if len(a.store) != 1 {
+		t.Fatalf("store length = %d, want 1", len(a.store))
+	}
+}
+
+func TestSetOversizedOverwriteReleasesExistingResponse(t *testing.T) {
+	a := &Adapter{
+		mutex:     sync.RWMutex{},
+		capacity:  64,
+		algorithm: LRU,
+		store:     map[uint64][]byte{},
+		storage: storageControl{
+			max: 10,
+		},
+	}
+
+	a.Set(1, []byte("12345"), time.Now().Add(1*time.Minute))
+	a.Set(1, []byte("larger than max storage"), time.Now().Add(1*time.Minute))
+
+	if len(a.store) != 0 {
+		t.Fatalf("store length = %d, want 0", len(a.store))
+	}
+	if a.storage.cur != 0 {
+		t.Fatalf("storage cur = %d, want 0", a.storage.cur)
+	}
+}

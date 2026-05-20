@@ -29,10 +29,12 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"hash"
 	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +48,9 @@ type Response struct {
 
 	// Header is the cached response header.
 	Header http.Header
+
+	// StatusCode is the cached response status code.
+	StatusCode int
 
 	// Expiration is the cached response expiration date.
 	Expiration time.Time
@@ -65,6 +70,10 @@ type Client struct {
 	ttl                time.Duration
 	refreshKey         string
 	methods            []string
+	skipCacheHeader    string
+	skipCachePathRegex *regexp.Regexp
+	varyHeaders        []string
+	statusCodeFilter   func(int) bool
 	writeExpiresHeader bool
 }
 
@@ -87,9 +96,9 @@ type Adapter interface {
 // Middleware is the HTTP cache middleware handler.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c.cacheableMethod(r.Method) {
+		if c.cacheableMethod(r.Method) && c.cacheableURIPath(r.URL) {
 			sortURLParams(r.URL)
-			key := generateKey(r.URL.String())
+			key := generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders)
 			if r.Method == http.MethodPost && r.Body != nil {
 				body, err := io.ReadAll(r.Body)
 				defer r.Body.Close()
@@ -98,7 +107,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					return
 				}
 				reader := io.NopCloser(bytes.NewBuffer(body))
-				key = generateKeyWithBody(r.URL.String(), body)
+				key = generateKeyWithBodyAndHeaders(r.URL.String(), body, r.Header, c.varyHeaders)
 				r.Body = reader
 			}
 
@@ -107,24 +116,26 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				delete(params, c.refreshKey)
 
 				r.URL.RawQuery = params.Encode()
-				key = generateKey(r.URL.String())
+				key = generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders)
 
 				c.adapter.Release(key)
 			} else {
 				b, ok := c.adapter.Get(key)
-				response := BytesToResponse(b)
 				if ok {
+					response := BytesToResponse(b)
 					if response.Expiration.After(time.Now()) {
 						response.LastAccess = time.Now()
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
-						//w.WriteHeader(http.StatusNotModified)
 						for k, v := range response.Header {
 							w.Header().Set(k, strings.Join(v, ","))
 						}
 						if c.writeExpiresHeader {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
+						}
+						if response.StatusCode > 0 {
+							w.WriteHeader(response.StatusCode)
 						}
 						w.Write(response.Value)
 						return
@@ -137,14 +148,15 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			rw := &responseWriter{ResponseWriter: w}
 			next.ServeHTTP(rw, r)
 
-			statusCode := rw.statusCode
-			value := rw.body
+			statusCode := rw.statusCodeValue()
+			value := rw.body.Bytes()
 			now := time.Now()
 			expires := now.Add(c.ttl)
-			if statusCode < 400 {
+			if c.cacheableResponse(rw, statusCode) {
 				response := Response{
 					Value:      value,
 					Header:     rw.Header(),
+					StatusCode: statusCode,
 					Expiration: expires,
 					LastAccess: now,
 					Frequency:  1,
@@ -159,6 +171,16 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
+	if !c.statusCodeFilter(statusCode) {
+		return false
+	}
+	if c.skipCacheHeader == "" {
+		return true
+	}
+	return rw.Header().Get(c.skipCacheHeader) == ""
+}
+
 func (c *Client) cacheableMethod(method string) bool {
 	for _, m := range c.methods {
 		if method == m {
@@ -166,6 +188,13 @@ func (c *Client) cacheableMethod(method string) bool {
 		}
 	}
 	return false
+}
+
+func (c *Client) cacheableURIPath(URL *url.URL) bool {
+	if c.skipCachePathRegex == nil {
+		return true
+	}
+	return !c.skipCachePathRegex.MatchString(URL.Path)
 }
 
 // BytesToResponse converts bytes array into Response data structure.
@@ -210,10 +239,50 @@ func generateKey(URL string) uint64 {
 
 func generateKeyWithBody(URL string, body []byte) uint64 {
 	hash := fnv.New64a()
-	body = append([]byte(URL), body...)
+	hash.Write([]byte(URL))
 	hash.Write(body)
 
 	return hash.Sum64()
+}
+
+func generateKeyWithHeaders(URL string, headers http.Header, varyHeaders []string) uint64 {
+	if len(varyHeaders) == 0 {
+		return generateKey(URL)
+	}
+
+	hash := fnv.New64a()
+	writeKeyPart(hash, URL)
+	writeHeaders(hash, headers, varyHeaders)
+
+	return hash.Sum64()
+}
+
+func generateKeyWithBodyAndHeaders(URL string, body []byte, headers http.Header, varyHeaders []string) uint64 {
+	if len(varyHeaders) == 0 {
+		return generateKeyWithBody(URL, body)
+	}
+
+	hash := fnv.New64a()
+	writeKeyPart(hash, URL)
+	writeHeaders(hash, headers, varyHeaders)
+	hash.Write(body)
+
+	return hash.Sum64()
+}
+
+func writeHeaders(hash hash.Hash64, headers http.Header, varyHeaders []string) {
+	for _, header := range varyHeaders {
+		name := http.CanonicalHeaderKey(header)
+		writeKeyPart(hash, name)
+		for _, value := range headers.Values(name) {
+			writeKeyPart(hash, value)
+		}
+	}
+}
+
+func writeKeyPart(hash hash.Hash64, value string) {
+	hash.Write([]byte{0})
+	hash.Write([]byte(value))
 }
 
 // NewClient initializes the cache HTTP middleware client with the given
@@ -235,6 +304,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	}
 	if c.methods == nil {
 		c.methods = []string{http.MethodGet}
+	}
+	if c.statusCodeFilter == nil {
+		c.statusCodeFilter = func(statusCode int) bool {
+			return statusCode < 400
+		}
 	}
 
 	return c, nil
@@ -285,6 +359,44 @@ func ClientWithMethods(methods []string) ClientOption {
 	}
 }
 
+// ClientWithStatusCodeFilter sets the response status codes that can be cached.
+// Optional setting. If not set, responses below 400 are cached.
+func ClientWithStatusCodeFilter(filter func(int) bool) ClientOption {
+	return func(c *Client) error {
+		if filter == nil {
+			return errors.New("cache client status code filter is not set")
+		}
+		c.statusCodeFilter = filter
+		return nil
+	}
+}
+
+// ClientWithSkipCacheResponseHeader sets a response header that prevents
+// successful responses from being stored.
+func ClientWithSkipCacheResponseHeader(header string) ClientOption {
+	return func(c *Client) error {
+		c.skipCacheHeader = header
+		return nil
+	}
+}
+
+// ClientWithSkipCacheURIPathRegex skips cache lookup and storage for matching
+// request URL paths.
+func ClientWithSkipCacheURIPathRegex(pathRegex *regexp.Regexp) ClientOption {
+	return func(c *Client) error {
+		c.skipCachePathRegex = pathRegex
+		return nil
+	}
+}
+
+// ClientWithVaryHeaders includes selected request headers in cache keys.
+func ClientWithVaryHeaders(headers []string) ClientOption {
+	return func(c *Client) error {
+		c.varyHeaders = headers
+		return nil
+	}
+}
+
 // ClientWithExpiresHeader enables middleware to add an Expires header to responses.
 // Optional setting. If not set, default is false.
 func ClientWithExpiresHeader() ClientOption {
@@ -297,15 +409,28 @@ func ClientWithExpiresHeader() ClientOption {
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
-	body       []byte
+	body       bytes.Buffer
 }
 
 func (w *responseWriter) WriteHeader(statusCode int) {
+	if w.statusCode != 0 {
+		return
+	}
 	w.statusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
-	w.body = b
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	w.body.Write(b)
 	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseWriter) statusCodeValue() int {
+	if w.statusCode == 0 {
+		return http.StatusOK
+	}
+	return w.statusCode
 }
