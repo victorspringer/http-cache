@@ -26,6 +26,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/gob"
 	"errors"
@@ -128,6 +129,7 @@ type Client struct {
 	maxBodySize         int
 	singleflightEnabled bool
 	respectCacheControl bool
+	staleWindow         time.Duration
 	sf                  singleflightGroup
 }
 
@@ -263,6 +265,24 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						w.Write(response.Value)
 						return
 					default:
+						if c.staleWindow > 0 && time.Since(response.Expiration) <= c.staleWindow {
+							// Within RFC 5861 stale-while-revalidate
+							// window: serve stale immediately and
+							// refresh the entry in the background.
+							statusCode := cachedStatusCode(response.Header)
+							c.observe(CacheEventHit, r, key, statusCode)
+							c.scheduleRefresh(r, next, key, fingerprint)
+							if r.Context().Err() != nil {
+								return
+							}
+							writeHeader(w.Header(), response.Header)
+							if c.writeExpiresHeader && !response.Expiration.IsZero() {
+								w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
+							}
+							w.WriteHeader(statusCode)
+							w.Write(response.Value)
+							return
+						}
 						c.adapter.Release(key)
 						c.observe(CacheEventStale, r, key, 0)
 					}
@@ -327,6 +347,46 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(w, r)
+	})
+}
+
+// scheduleRefresh kicks off a background revalidation of a stale entry.
+// The work is coalesced through the same singleflight group used by
+// ClientWithSingleflight, so a stampede of concurrent stale hits runs
+// exactly one origin request. The refresh outlives the caller's
+// context: it is given context.Background() so a disconnect on the
+// triggering request does not abort the refill.
+func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64, fingerprint []byte) {
+	cloned := r.Clone(context.Background())
+	go c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
+		if b, ok := c.adapter.Get(key); ok {
+			if resp, err := decodeResponse(b); err == nil && resp.Valid() {
+				return nil
+			}
+		}
+		cw := newCaptureWriter(c.maxBodySize)
+		next.ServeHTTP(cw, cloned)
+		statusCode := cw.statusCodeValue()
+		if !c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
+			return nil
+		}
+		now := time.Now()
+		ttl := c.responseTTL(cw.header)
+		expires := time.Time{}
+		if ttl > 0 {
+			expires = now.Add(ttl)
+		}
+		response := Response{
+			Value:        cw.body.Bytes(),
+			Header:       cacheHeader(cw.header, statusCode),
+			Expiration:   expires,
+			LastAccess:   now,
+			Frequency:    1,
+			CanonicalKey: fingerprint,
+		}
+		c.adapter.Set(key, response.Bytes(), response.Expiration)
+		c.observe(CacheEventStore, cloned, key, statusCode)
+		return nil
 	})
 }
 
@@ -866,6 +926,23 @@ func ClientWithPurge() ClientOption {
 func ClientWithSingleflight() ClientOption {
 	return func(c *Client) error {
 		c.singleflightEnabled = true
+		return nil
+	}
+}
+
+// ClientWithStaleWhileRevalidate enables RFC 5861 stale-while-revalidate
+// semantics: an expired entry whose Expiration is no older than window
+// is served from cache immediately while a single background goroutine
+// refreshes it from the origin. Concurrent stale hits coalesce so only
+// one refresh runs per key at a time. Defaults to 0 (off), in which
+// case expired entries continue to fall through to the existing
+// release-and-miss path.
+func ClientWithStaleWhileRevalidate(window time.Duration) ClientOption {
+	return func(c *Client) error {
+		if window < 0 {
+			return fmt.Errorf("cache client stale-while-revalidate window %v is invalid", window)
+		}
+		c.staleWindow = window
 		return nil
 	}
 }
