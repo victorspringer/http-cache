@@ -233,13 +233,18 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 
 						statusCode := cachedStatusCode(response.Header)
 						c.observe(CacheEventHit, r, key, statusCode)
+						// Skip the wire writes for clients that already
+						// disconnected. cachedStatusCode never returns 0
+						// (it normalizes to http.StatusOK), so an
+						// unconditional WriteHeader is safe.
+						if r.Context().Err() != nil {
+							return
+						}
 						writeHeader(w.Header(), response.Header)
 						if c.writeExpiresHeader && !response.Expiration.IsZero() {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
 						}
-						if statusCode > 0 {
-							w.WriteHeader(statusCode)
-						}
+						w.WriteHeader(statusCode)
 						w.Write(response.Value)
 						return
 					default:
@@ -421,12 +426,23 @@ func canonicalKeyMatches(stored, fingerprint []byte) bool {
 	return bytes.Equal(stored, fingerprint)
 }
 
+// sha256Pool reuses hash.Hash instances across canonicalFingerprint
+// calls. The hasher's internal state is reset before use, so the only
+// state carried across calls is the ~250 bytes of internal buffers that
+// would otherwise be allocated per request.
+var sha256Pool = sync.Pool{
+	New: func() interface{} { return sha256.New() },
+}
+
 // canonicalFingerprint hashes the request inputs that go into the cache
 // key with SHA-256. The middleware stores the fingerprint with each
 // cached response and verifies it on every hit so an FNV-64 collision
 // cannot serve one request's response to another.
 func canonicalFingerprint(URL string, body []byte, headers http.Header, varyHeaders []string) []byte {
-	h := sha256.New()
+	h := sha256Pool.Get().(hash.Hash)
+	h.Reset()
+	defer sha256Pool.Put(h)
+
 	h.Write([]byte(URL))
 	for _, name := range varyHeaders {
 		canonName := http.CanonicalHeaderKey(name)
