@@ -38,6 +38,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -110,20 +111,22 @@ type Response struct {
 
 // Client data structure for HTTP cache middleware.
 type Client struct {
-	adapter            Adapter
-	adapterTouch       AdapterTouch
-	ttl                time.Duration
-	ttlSet             bool
-	refreshKey         string
-	methods            []string
-	skipCacheHeader    string
-	skipCachePathRegex *regexp.Regexp
-	varyHeaders        []string
-	statusCodeFilter   func(int) bool
-	writeExpiresHeader bool
-	observer           Observer
-	purgeEnabled       bool
-	maxBodySize        int
+	adapter             Adapter
+	adapterTouch        AdapterTouch
+	ttl                 time.Duration
+	ttlSet              bool
+	refreshKey          string
+	methods             []string
+	skipCacheHeader     string
+	skipCachePathRegex  *regexp.Regexp
+	varyHeaders         []string
+	statusCodeFilter    func(int) bool
+	writeExpiresHeader  bool
+	observer            Observer
+	purgeEnabled        bool
+	maxBodySize         int
+	singleflightEnabled bool
+	sf                  singleflightGroup
 }
 
 // ClientOption is used to set Client settings.
@@ -246,6 +249,35 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 			}
 
+			if c.singleflightEnabled {
+				payload, _ := c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
+					cw := newCaptureWriter(c.maxBodySize)
+					next.ServeHTTP(cw, r)
+					statusCode := cw.statusCodeValue()
+					if c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
+						now := time.Now()
+						expires := time.Time{}
+						if c.ttl > 0 {
+							expires = now.Add(c.ttl)
+						}
+						response := Response{
+							Value:        cw.body.Bytes(),
+							Header:       cacheHeader(cw.header, statusCode),
+							Expiration:   expires,
+							LastAccess:   now,
+							Frequency:    1,
+							CanonicalKey: fingerprint,
+						}
+						c.adapter.Set(key, response.Bytes(), response.Expiration)
+						c.observe(CacheEventStore, r, key, statusCode)
+					}
+					return cw
+				})
+				cw := payload.(*captureWriter)
+				writeCapturedResponse(w, cw)
+				return
+			}
+
 			rw := newResponseWriter(w, c.maxBodySize)
 			next.ServeHTTP(rw, r)
 
@@ -311,14 +343,18 @@ func (c *Client) Drop(r *http.Request) error {
 }
 
 func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
-	if !rw.wrote {
+	return c.cacheableSnapshot(rw.Header(), rw.wrote, rw.exceeded, statusCode)
+}
+
+func (c *Client) cacheableSnapshot(header http.Header, wrote, exceeded bool, statusCode int) bool {
+	if !wrote {
 		// Handlers that return without calling Write or WriteHeader
 		// (early error returns, hijacked connections, abandoned RPCs)
 		// would otherwise be cached as an empty 200 OK response and
 		// served back to every subsequent request.
 		return false
 	}
-	if rw.exceeded {
+	if exceeded {
 		return false
 	}
 	if !c.statusCodeFilter(statusCode) {
@@ -327,7 +363,7 @@ func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
 	if c.skipCacheHeader == "" {
 		return true
 	}
-	return rw.Header().Get(c.skipCacheHeader) == ""
+	return header.Get(c.skipCacheHeader) == ""
 }
 
 func (c *Client) cacheableMethod(method string) bool {
@@ -717,6 +753,17 @@ func ClientWithPurge() ClientOption {
 	}
 }
 
+// ClientWithSingleflight coalesces concurrent cache misses for the same
+// key so the origin handler runs only once per cache-miss batch. All
+// concurrent callers receive the same response. Defaults off so callers
+// who depend on per-request handler invocations are not surprised.
+func ClientWithSingleflight() ClientOption {
+	return func(c *Client) error {
+		c.singleflightEnabled = true
+		return nil
+	}
+}
+
 // ClientWithMaxBodySize caps the response body bytes the middleware will
 // buffer and cache. Responses that grow past the limit are still
 // streamed to the client untouched, but their buffered copy is dropped
@@ -792,4 +839,113 @@ func (w *responseWriter) statusCodeValue() int {
 		return http.StatusOK
 	}
 	return w.statusCode
+}
+
+// writeCapturedResponse copies a captureWriter's recorded response to a
+// real http.ResponseWriter. Used to deliver a singleflight leader's
+// captured response to every follower (and to the leader itself).
+func writeCapturedResponse(w http.ResponseWriter, cw *captureWriter) {
+	dst := w.Header()
+	for k, vs := range cw.header {
+		if k == cacheStatusCodeHeader {
+			continue
+		}
+		dst[k] = append([]string(nil), vs...)
+	}
+	if cw.statusCode > 0 {
+		w.WriteHeader(cw.statusCode)
+	}
+	if cw.body.Len() > 0 {
+		w.Write(cw.body.Bytes())
+	}
+}
+
+// captureWriter records a handler's response without forwarding it to a
+// real http.ResponseWriter, so a single execution can be shared across
+// the goroutines that coalesce on the same singleflight key.
+type captureWriter struct {
+	header      http.Header
+	body        bytes.Buffer
+	statusCode  int
+	wrote       bool
+	maxBodySize int
+	exceeded    bool
+}
+
+func newCaptureWriter(maxBodySize int) *captureWriter {
+	return &captureWriter{
+		header:      make(http.Header),
+		maxBodySize: maxBodySize,
+	}
+}
+
+func (w *captureWriter) Header() http.Header { return w.header }
+
+func (w *captureWriter) WriteHeader(statusCode int) {
+	if w.wrote {
+		return
+	}
+	w.statusCode = statusCode
+	w.wrote = true
+}
+
+func (w *captureWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.statusCode = http.StatusOK
+		w.wrote = true
+	}
+	if !w.exceeded {
+		if w.maxBodySize > 0 && w.body.Len()+len(b) > w.maxBodySize {
+			w.exceeded = true
+			w.body.Reset()
+		} else {
+			w.body.Write(b)
+		}
+	}
+	return len(b), nil
+}
+
+func (w *captureWriter) statusCodeValue() int {
+	if w.statusCode == 0 {
+		return http.StatusOK
+	}
+	return w.statusCode
+}
+
+// singleflightGroup is a minimal in-house re-implementation of the
+// "share one execution across N concurrent callers" pattern. It avoids
+// pulling golang.org/x/sync as a direct dependency (which would also
+// bump the module's minimum Go version) for a 40-line primitive.
+type singleflightGroup struct {
+	mu sync.Mutex
+	m  map[string]*sfCall
+}
+
+type sfCall struct {
+	done chan struct{}
+	val  interface{}
+}
+
+func (g *singleflightGroup) Do(key string, fn func() interface{}) (interface{}, bool) {
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = make(map[string]*sfCall)
+	}
+	if call, ok := g.m[key]; ok {
+		g.mu.Unlock()
+		<-call.done
+		return call.val, true
+	}
+	call := &sfCall{done: make(chan struct{})}
+	g.m[key] = call
+	g.mu.Unlock()
+
+	call.val = fn()
+	close(call.done)
+
+	g.mu.Lock()
+	delete(g.m, key)
+	g.mu.Unlock()
+
+	return call.val, false
 }
