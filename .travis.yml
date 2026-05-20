@@ -1,31 +1,27 @@
-sudo: required
-
 language: go
+dist: jammy
 
 go:
-  - 1.9
+  - "1.26.3"
 
 services:
   - docker
 
 cache:
   directories:
-    - $GOPATH/pkg/dep
-
-env:
-  - DEP_VERSION="0.4.1"
+    - $GOPATH/pkg/mod
+    - $HOME/.cache/go-build
 
 before_install:
-  - curl -L -s http://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64 -o $GOPATH/bin/dep
-  - chmod +x $GOPATH/bin/dep
-  - go get golang.org/x/tools/cmd/cover
-  - go get github.com/mattn/goveralls
-  - docker pull redis
-  - docker run -it -d -p 6379:6379 redis
+  - docker run -d -p 6379:6379 redis:7-alpine
+  - go install github.com/mattn/goveralls@latest
 
 install:
-  - dep ensure
+  - go mod download
 
 script:
-  - go test -cover -race -v -covermode=atomic -coverprofile=coverage.out
-  - $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=travis-ci -repotoken $COVERALLS_TOKEN
+  - go vet ./...
+  - go test -cover -race -v -covermode=atomic -coverprofile=coverage.out ./...
+
+after_success:
+  - if [ -n "$COVERALLS_TOKEN" ]; then goveralls -coverprofile=coverage.out -service=travis-ci -repotoken "$COVERALLS_TOKEN"; else echo "COVERALLS_TOKEN is not set; skipping Coveralls upload"; fi
