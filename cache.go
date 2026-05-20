@@ -276,9 +276,33 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// Drop releases the cache entry matching the given request.
+// Drop releases the cache entry matching the given request. The caller's
+// *http.Request is left unmodified: its URL.RawQuery is not reordered
+// and its Body remains readable after the call returns.
 func (c *Client) Drop(r *http.Request) error {
-	key, _, err := c.key(r)
+	// Read the body up front so the caller gets a fresh reader and we
+	// can hand a separate, equivalent copy to c.key.
+	var bodyBytes []byte
+	if r.Body != nil {
+		b, err := io.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			return err
+		}
+		bodyBytes = b
+		r.Body = io.NopCloser(bytes.NewBuffer(b))
+	}
+
+	cloned := *r
+	if r.URL != nil {
+		u := *r.URL
+		cloned.URL = &u
+	}
+	if bodyBytes != nil {
+		cloned.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
+
+	key, _, err := c.key(&cloned)
 	if err != nil {
 		return err
 	}
