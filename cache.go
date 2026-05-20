@@ -37,7 +37,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -154,23 +153,41 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				return
 			}
 
-			params := r.URL.Query()
-			if _, ok := params[c.refreshKey]; ok {
-				delete(params, c.refreshKey)
-				r.URL.RawQuery = params.Encode()
-				key, err = c.key(r)
-				if err != nil {
-					next.ServeHTTP(w, r)
-					return
-				}
+			// Refresh detection is opt-in via ClientWithRefreshKey; an empty
+			// refreshKey would otherwise match URLs containing a bare "?=x"
+			// (empty query key, non-empty value) and let any caller wipe the
+			// cache entry.
+			refreshed := false
+			if c.refreshKey != "" {
+				params := r.URL.Query()
+				if _, ok := params[c.refreshKey]; ok {
+					delete(params, c.refreshKey)
+					r.URL.RawQuery = params.Encode()
+					key, err = c.key(r)
+					if err != nil {
+						next.ServeHTTP(w, r)
+						return
+					}
 
-				c.adapter.Release(key)
-				c.observe(CacheEventRefresh, r, key, 0)
-			} else {
+					c.adapter.Release(key)
+					c.observe(CacheEventRefresh, r, key, 0)
+					refreshed = true
+				}
+			}
+			if !refreshed {
 				b, ok := c.adapter.Get(key)
-				if ok {
-					response := BytesToResponse(b)
-					if response.Valid() {
+				switch {
+				case !ok:
+					c.observe(CacheEventMiss, r, key, 0)
+				default:
+					response, decodeErr := decodeResponse(b)
+					switch {
+					case decodeErr != nil:
+						// Corrupted or version-skewed entry: drop it and
+						// fall through to the origin as a miss.
+						c.adapter.Release(key)
+						c.observe(CacheEventMiss, r, key, 0)
+					case response.Valid():
 						response.LastAccess = time.Now()
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
@@ -186,12 +203,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						}
 						w.Write(response.Value)
 						return
+					default:
+						c.adapter.Release(key)
+						c.observe(CacheEventStale, r, key, 0)
 					}
-
-					c.adapter.Release(key)
-					c.observe(CacheEventStale, r, key, 0)
-				} else {
-					c.observe(CacheEventMiss, r, key, 0)
 				}
 			}
 
@@ -323,17 +338,34 @@ func writeHeader(dst http.Header, src http.Header) {
 		if k == cacheStatusCodeHeader {
 			continue
 		}
-		dst.Set(k, strings.Join(values, ","))
+		// Use a fresh slice per key. Set-Cookie and other multi-valued
+		// headers MUST be emitted as separate values; joining them with a
+		// comma corrupts cookies whose Expires attribute contains a comma.
+		dst[k] = append([]string(nil), values...)
 	}
 }
 
 // BytesToResponse converts bytes array into Response data structure.
+// Decoding errors are silently swallowed for backward compatibility;
+// the middleware uses decodeResponse internally so it can detect
+// corruption and treat the entry as a cache miss.
 func BytesToResponse(b []byte) Response {
-	var r Response
-	dec := gob.NewDecoder(bytes.NewReader(b))
-	dec.Decode(&r)
-
+	r, _ := decodeResponse(b)
 	return r
+}
+
+// decodeResponse returns a Response and any error from the gob decoder
+// so callers can distinguish empty/corrupt entries from zero-valued ones.
+func decodeResponse(b []byte) (Response, error) {
+	var r Response
+	if len(b) == 0 {
+		return r, errors.New("cache: empty response payload")
+	}
+	dec := gob.NewDecoder(bytes.NewReader(b))
+	if err := dec.Decode(&r); err != nil {
+		return Response{}, err
+	}
+	return r, nil
 }
 
 // Valid returns whether the response can still be served from cache.
