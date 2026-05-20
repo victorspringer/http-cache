@@ -123,6 +123,7 @@ type Client struct {
 	writeExpiresHeader bool
 	observer           Observer
 	purgeEnabled       bool
+	maxBodySize        int
 }
 
 // ClientOption is used to set Client settings.
@@ -245,7 +246,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 			}
 
-			rw := newResponseWriter(w)
+			rw := newResponseWriter(w, c.maxBodySize)
 			next.ServeHTTP(rw, r)
 
 			statusCode := rw.statusCodeValue()
@@ -286,6 +287,9 @@ func (c *Client) Drop(r *http.Request) error {
 }
 
 func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
+	if rw.exceeded {
+		return false
+	}
 	if !c.statusCodeFilter(statusCode) {
 		return false
 	}
@@ -676,17 +680,38 @@ func ClientWithPurge() ClientOption {
 	}
 }
 
-type responseWriter struct {
-	http.ResponseWriter
-	statusCode int
-	body       bytes.Buffer
-	header     http.Header
+// ClientWithMaxBodySize caps the response body bytes the middleware will
+// buffer and cache. Responses that grow past the limit are still
+// streamed to the client untouched, but their buffered copy is dropped
+// and the entry is not stored. Defaults to no limit (0) for backward
+// compatibility; that default lets a single oversized response (a
+// download, an unbounded stream) hold its bytes in memory until the
+// handler returns, so set a cap for any endpoint that can emit large
+// payloads.
+func ClientWithMaxBodySize(size int) ClientOption {
+	return func(c *Client) error {
+		if size <= 0 {
+			return fmt.Errorf("cache client max body size %d must be greater than 0", size)
+		}
+		c.maxBodySize = size
+		return nil
+	}
 }
 
-func newResponseWriter(w http.ResponseWriter) *responseWriter {
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode  int
+	body        bytes.Buffer
+	header      http.Header
+	maxBodySize int
+	exceeded    bool
+}
+
+func newResponseWriter(w http.ResponseWriter, maxBodySize int) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
 		header:         make(http.Header),
+		maxBodySize:    maxBodySize,
 	}
 }
 
@@ -707,7 +732,17 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
-	w.body.Write(b)
+	if !w.exceeded {
+		if w.maxBodySize > 0 && w.body.Len()+len(b) > w.maxBodySize {
+			// Stop buffering and free the partially-buffered copy so an
+			// oversized response cannot pin the underlying memory until
+			// the handler returns.
+			w.exceeded = true
+			w.body.Reset()
+		} else {
+			w.body.Write(b)
+		}
+	}
 	writeHeader(w.ResponseWriter.Header(), w.header)
 	return w.ResponseWriter.Write(b)
 }
