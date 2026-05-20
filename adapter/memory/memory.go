@@ -27,7 +27,9 @@ package memory
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cache "github.com/victorspringer/http-cache"
@@ -50,12 +52,22 @@ const (
 	MFU Algorithm = "MFU"
 )
 
+// entry holds per-key access metadata. lastAccessNano and frequency are
+// read and updated atomically so cache hits can record their access
+// outside of the adapter's write lock.
+type entry struct {
+	lastAccessNano int64
+	frequency      int64
+	size           int
+}
+
 // Adapter is the memory adapter data structure.
 type Adapter struct {
 	mutex     sync.RWMutex
 	capacity  int
 	algorithm Algorithm
 	store     map[uint64][]byte
+	meta      map[uint64]*entry
 	storage   storageControl
 }
 
@@ -80,8 +92,15 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
+	if a.meta == nil {
+		// Backstop for adapters constructed without NewAdapter (e.g.
+		// direct struct literals in tests).
+		a.meta = make(map[uint64]*entry, len(a.store)+1)
+	}
+
 	if old, ok := a.store[key]; ok {
 		delete(a.store, key)
+		delete(a.meta, key)
 		a.storage.del(len(old))
 	}
 
@@ -102,7 +121,23 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	}
 
 	a.store[key] = response
+	a.meta[key] = newEntryFromResponse(response, len(response))
 	a.storage.add(len(response))
+}
+
+// Touch implements the cache.AdapterTouch optional interface. It records
+// an access on key without touching the cached payload or the write
+// lock, eliminating the read-modify-write race that the legacy
+// middleware path exhibited under concurrency.
+func (a *Adapter) Touch(key uint64) {
+	a.mutex.RLock()
+	e, ok := a.meta[key]
+	a.mutex.RUnlock()
+	if !ok {
+		return
+	}
+	atomic.StoreInt64(&e.lastAccessNano, time.Now().UnixNano())
+	atomic.AddInt64(&e.frequency, 1)
 }
 
 // Release implements the Adapter interface Release method.
@@ -115,58 +150,90 @@ func (a *Adapter) Release(key uint64) {
 		return
 	}
 	delete(a.store, key)
+	delete(a.meta, key)
 	a.storage.del(len(b))
+}
+
+// newEntryFromResponse seeds an entry from the encoded Response's
+// metadata when possible. This keeps eviction semantics compatible with
+// callers that pre-populated the store with hand-built Response blobs.
+func newEntryFromResponse(blob []byte, size int) *entry {
+	e := &entry{
+		lastAccessNano: time.Now().UnixNano(),
+		frequency:      1,
+		size:           size,
+	}
+	if r := cache.BytesToResponse(blob); !r.LastAccess.IsZero() || r.Frequency > 0 {
+		if !r.LastAccess.IsZero() {
+			e.lastAccessNano = r.LastAccess.UnixNano()
+		}
+		if r.Frequency > 0 {
+			e.frequency = int64(r.Frequency)
+		}
+	}
+	return e
 }
 
 // evict removes a single entry from the store. It assumes that the caller holds
 // the write lock.
 func (a *Adapter) evict() bool {
-	selectedKey := uint64(0)
-	lastAccess := time.Now()
-	frequency := 2147483647
+	var (
+		selectedKey uint64
+		selSize     int
+		hit         bool
+	)
 
-	if a.algorithm == MRU {
-		lastAccess = time.Time{}
-	} else if a.algorithm == MFU {
-		frequency = 0
-	}
-
-	var sz int
-	var hit bool
-	for k, v := range a.store {
-		r := cache.BytesToResponse(v)
-		switch a.algorithm {
-		case LRU:
-			if r.LastAccess.Before(lastAccess) {
+	switch a.algorithm {
+	case LRU:
+		oldest := int64(math.MaxInt64)
+		for k, e := range a.meta {
+			last := atomic.LoadInt64(&e.lastAccessNano)
+			if last < oldest {
+				oldest = last
 				selectedKey = k
-				lastAccess = r.LastAccess
-				sz, hit = len(v), true
+				selSize = e.size
+				hit = true
 			}
-		case MRU:
-			if r.LastAccess.After(lastAccess) ||
-				r.LastAccess.Equal(lastAccess) {
+		}
+	case MRU:
+		newest := int64(math.MinInt64)
+		for k, e := range a.meta {
+			last := atomic.LoadInt64(&e.lastAccessNano)
+			if last >= newest {
+				newest = last
 				selectedKey = k
-				lastAccess = r.LastAccess
-				sz, hit = len(v), true
+				selSize = e.size
+				hit = true
 			}
-		case LFU:
-			if r.Frequency < frequency {
+		}
+	case LFU:
+		lowest := int64(math.MaxInt64)
+		for k, e := range a.meta {
+			f := atomic.LoadInt64(&e.frequency)
+			if f < lowest {
+				lowest = f
 				selectedKey = k
-				frequency = r.Frequency
-				sz, hit = len(v), true
+				selSize = e.size
+				hit = true
 			}
-		case MFU:
-			if r.Frequency >= frequency {
+		}
+	case MFU:
+		highest := int64(math.MinInt64)
+		for k, e := range a.meta {
+			f := atomic.LoadInt64(&e.frequency)
+			if f >= highest {
+				highest = f
 				selectedKey = k
-				frequency = r.Frequency
-				sz, hit = len(v), true
+				selSize = e.size
+				hit = true
 			}
 		}
 	}
 
 	if hit {
-		a.storage.del(sz)
+		a.storage.del(selSize)
 		delete(a.store, selectedKey)
+		delete(a.meta, selectedKey)
 	}
 	return hit
 }
@@ -192,8 +259,10 @@ func NewAdapter(opts ...AdapterOptions) (cache.Adapter, error) {
 	a.mutex = sync.RWMutex{}
 	if a.capacity > 0 {
 		a.store = make(map[uint64][]byte, a.capacity)
+		a.meta = make(map[uint64]*entry, a.capacity)
 	} else {
 		a.store = make(map[uint64][]byte, 4) //just init with something
+		a.meta = make(map[uint64]*entry, 4)
 	}
 
 	return a, nil

@@ -101,6 +101,7 @@ type Response struct {
 // Client data structure for HTTP cache middleware.
 type Client struct {
 	adapter            Adapter
+	adapterTouch       AdapterTouch
 	ttl                time.Duration
 	ttlSet             bool
 	refreshKey         string
@@ -128,6 +129,16 @@ type Adapter interface {
 
 	// Release frees cache for a given key.
 	Release(key uint64)
+}
+
+// AdapterTouch is an optional Adapter extension. When an adapter
+// implements it, the middleware records each cache hit via Touch
+// instead of re-encoding the response and calling Set, eliminating the
+// read-modify-write lost-update race and the per-hit gob round-trip.
+// Adapters that do not implement Touch keep receiving the legacy Set
+// call so existing custom adapters retain their behavior.
+type AdapterTouch interface {
+	Touch(key uint64)
 }
 
 // Middleware is the HTTP cache middleware handler.
@@ -188,9 +199,17 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						c.adapter.Release(key)
 						c.observe(CacheEventMiss, r, key, 0)
 					case response.Valid():
-						response.LastAccess = time.Now()
-						response.Frequency++
-						c.adapter.Set(key, response.Bytes(), response.Expiration)
+						if c.adapterTouch != nil {
+							c.adapterTouch.Touch(key)
+						} else {
+							// Legacy in-blob bookkeeping for adapters that
+							// don't implement AdapterTouch. Subject to the
+							// lost-update race under concurrency, but
+							// preserved for backward compatibility.
+							response.LastAccess = time.Now()
+							response.Frequency++
+							c.adapter.Set(key, response.Bytes(), response.Expiration)
+						}
 
 						statusCode := cachedStatusCode(response.Header)
 						c.observe(CacheEventHit, r, key, statusCode)
@@ -486,6 +505,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 func ClientWithAdapter(a Adapter) ClientOption {
 	return func(c *Client) error {
 		c.adapter = a
+		if t, ok := a.(AdapterTouch); ok {
+			c.adapterTouch = t
+		} else {
+			c.adapterTouch = nil
+		}
 		return nil
 	}
 }

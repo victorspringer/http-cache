@@ -211,29 +211,37 @@ func TestEvict(t *testing.T) {
 	for _, tt := range tests {
 		count++
 
+		r1 := cache.Response{
+			Value:      []byte("value 1"),
+			Expiration: time.Now().Add(1 * time.Minute),
+			LastAccess: time.Now().Add(-1 * time.Minute),
+			Frequency:  2,
+		}.Bytes()
+		r2 := cache.Response{
+			Value:      []byte("value 2"),
+			Expiration: time.Now().Add(1 * time.Minute),
+			LastAccess: time.Now().Add(-2 * time.Minute),
+			Frequency:  1,
+		}.Bytes()
+		r3 := cache.Response{
+			Value:      []byte("value 3"),
+			Expiration: time.Now().Add(1 * time.Minute),
+			LastAccess: time.Now().Add(-3 * time.Minute),
+			Frequency:  3,
+		}.Bytes()
 		a := &Adapter{
 			mutex:     sync.RWMutex{},
 			capacity:  2,
 			algorithm: tt.algorithm,
 			store: map[uint64][]byte{
-				14974843192121052621: cache.Response{
-					Value:      []byte("value 1"),
-					Expiration: time.Now().Add(1 * time.Minute),
-					LastAccess: time.Now().Add(-1 * time.Minute),
-					Frequency:  2,
-				}.Bytes(),
-				14974839893586167988: cache.Response{
-					Value:      []byte("value 2"),
-					Expiration: time.Now().Add(1 * time.Minute),
-					LastAccess: time.Now().Add(-2 * time.Minute),
-					Frequency:  1,
-				}.Bytes(),
-				14974840993097796199: cache.Response{
-					Value:      []byte("value 3"),
-					Expiration: time.Now().Add(1 * time.Minute),
-					LastAccess: time.Now().Add(-3 * time.Minute),
-					Frequency:  3,
-				}.Bytes(),
+				14974843192121052621: r1,
+				14974839893586167988: r2,
+				14974840993097796199: r3,
+			},
+			meta: map[uint64]*entry{
+				14974843192121052621: newEntryFromResponse(r1, len(r1)),
+				14974839893586167988: newEntryFromResponse(r2, len(r2)),
+				14974840993097796199: newEntryFromResponse(r3, len(r3)),
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,7 +290,8 @@ func TestNewAdapter(t *testing.T) {
 				mutex:     sync.RWMutex{},
 				capacity:  4,
 				algorithm: LRU,
-				store:     make(map[uint64][]byte),
+				store:     make(map[uint64][]byte, 4),
+				meta:      make(map[uint64]*entry, 4),
 			},
 			false,
 		},
