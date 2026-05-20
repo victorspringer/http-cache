@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ type errReader int
 type encodingWriter struct {
 	http.ResponseWriter
 }
+
+type contextKey string
 
 func (w encodingWriter) Write(b []byte) (int, error) {
 	w.Header().Set("Content-Encoding", "gzip")
@@ -523,6 +526,111 @@ func TestMiddlewareCachesWithoutExpiration(t *testing.T) {
 	}
 }
 
+func TestMiddlewareObserverReportsMissStoreAndHit(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+
+	var events []CacheEvent
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithObserver(func(event CacheEvent) {
+			events = append(events, event)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	ctx := context.WithValue(context.Background(), contextKey("trace"), "request-context")
+	r := httptest.NewRequest(http.MethodGet, "http://foo.bar/observed", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/observed", nil).WithContext(ctx)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	wantTypes := []CacheEventType{CacheEventMiss, CacheEventStore, CacheEventHit}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("events = %d, want %d", len(events), len(wantTypes))
+	}
+	for i, wantType := range wantTypes {
+		if events[i].Type != wantType {
+			t.Fatalf("events[%d].Type = %q, want %q", i, events[i].Type, wantType)
+		}
+		if events[i].Request.Context().Value(contextKey("trace")) != "request-context" {
+			t.Fatalf("events[%d].Request context was not preserved", i)
+		}
+	}
+	if events[1].StatusCode != http.StatusCreated {
+		t.Fatalf("store status code = %d, want %d", events[1].StatusCode, http.StatusCreated)
+	}
+	if events[2].StatusCode != http.StatusCreated {
+		t.Fatalf("hit status code = %d, want %d", events[2].StatusCode, http.StatusCreated)
+	}
+	if events[0].Key != events[1].Key || events[1].Key != events[2].Key {
+		t.Fatalf("event keys do not match: %d %d %d", events[0].Key, events[1].Key, events[2].Key)
+	}
+}
+
+func TestMiddlewareObserverReportsStaleAndRefresh(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{
+			generateKey("http://foo.bar/stale"): Response{
+				Value:      []byte("expired"),
+				Expiration: time.Now().Add(-1 * time.Minute),
+			}.Bytes(),
+		},
+	}
+
+	var events []CacheEvent
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithRefreshKey("refresh"),
+		ClientWithObserver(func(event CacheEvent) {
+			events = append(events, event)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("new value"))
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "http://foo.bar/stale", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/stale?refresh=true", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	wantTypes := []CacheEventType{CacheEventStale, CacheEventStore, CacheEventRefresh, CacheEventStore}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("events = %d, want %d", len(events), len(wantTypes))
+	}
+	for i, wantType := range wantTypes {
+		if events[i].Type != wantType {
+			t.Fatalf("events[%d].Type = %q, want %q", i, events[i].Type, wantType)
+		}
+	}
+	if events[0].Key != events[1].Key || events[1].Key != events[2].Key || events[2].Key != events[3].Key {
+		t.Fatalf("event keys do not match: %d %d %d %d", events[0].Key, events[1].Key, events[2].Key, events[3].Key)
+	}
+}
+
 func TestDropReleasesCachedResponse(t *testing.T) {
 	adapter := &adapterMock{
 		store: map[uint64][]byte{},
@@ -895,6 +1003,16 @@ func TestNewClient(t *testing.T) {
 				ClientWithAdapter(adapter),
 				ClientWithTTL(1 * time.Millisecond),
 				ClientWithStatusCodeFilter(nil),
+			},
+			nil,
+			true,
+		},
+		{
+			"returns error",
+			[]ClientOption{
+				ClientWithAdapter(adapter),
+				ClientWithTTL(1 * time.Millisecond),
+				ClientWithObserver(nil),
 			},
 			nil,
 			true,

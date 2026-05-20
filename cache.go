@@ -43,6 +43,37 @@ import (
 
 const cacheStatusCodeHeader = "Http-Cache-Status-Code"
 
+// CacheEventType identifies an observed cache middleware event.
+type CacheEventType string
+
+const (
+	// CacheEventHit means a valid cached response was served.
+	CacheEventHit CacheEventType = "hit"
+
+	// CacheEventMiss means no cached response was found.
+	CacheEventMiss CacheEventType = "miss"
+
+	// CacheEventStale means an expired cached response was found and released.
+	CacheEventStale CacheEventType = "stale"
+
+	// CacheEventRefresh means a cached response was explicitly released.
+	CacheEventRefresh CacheEventType = "refresh"
+
+	// CacheEventStore means a response was stored in cache.
+	CacheEventStore CacheEventType = "store"
+)
+
+// CacheEvent is passed to an observer when cache middleware events happen.
+type CacheEvent struct {
+	Type       CacheEventType
+	Request    *http.Request
+	Key        uint64
+	StatusCode int
+}
+
+// Observer receives cache middleware events.
+type Observer func(CacheEvent)
+
 // Response is the cached response data structure.
 type Response struct {
 	// Value is the cached response value.
@@ -75,6 +106,7 @@ type Client struct {
 	varyHeaders        []string
 	statusCodeFilter   func(int) bool
 	writeExpiresHeader bool
+	observer           Observer
 }
 
 // ClientOption is used to set Client settings.
@@ -114,6 +146,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 
 				c.adapter.Release(key)
+				c.observe(CacheEventRefresh, r, key, 0)
 			} else {
 				b, ok := c.adapter.Get(key)
 				if ok {
@@ -123,11 +156,13 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 						response.Frequency++
 						c.adapter.Set(key, response.Bytes(), response.Expiration)
 
+						statusCode := cachedStatusCode(response.Header)
+						c.observe(CacheEventHit, r, key, statusCode)
 						writeHeader(w.Header(), response.Header)
 						if c.writeExpiresHeader && !response.Expiration.IsZero() {
 							w.Header().Set("Expires", response.Expiration.UTC().Format(http.TimeFormat))
 						}
-						if statusCode := cachedStatusCode(response.Header); statusCode > 0 {
+						if statusCode > 0 {
 							w.WriteHeader(statusCode)
 						}
 						w.Write(response.Value)
@@ -135,6 +170,9 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					}
 
 					c.adapter.Release(key)
+					c.observe(CacheEventStale, r, key, 0)
+				} else {
+					c.observe(CacheEventMiss, r, key, 0)
 				}
 			}
 
@@ -157,6 +195,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					Frequency:  1,
 				}
 				c.adapter.Set(key, response.Bytes(), response.Expiration)
+				c.observe(CacheEventStore, r, key, statusCode)
 			}
 
 			return
@@ -216,6 +255,19 @@ func (c *Client) key(r *http.Request) (uint64, error) {
 
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 	return generateKeyWithBodyAndHeaders(r.URL.String(), body, r.Header, c.varyHeaders), nil
+}
+
+func (c *Client) observe(eventType CacheEventType, r *http.Request, key uint64, statusCode int) {
+	if c.observer == nil {
+		return
+	}
+
+	c.observer(CacheEvent{
+		Type:       eventType,
+		Request:    r,
+		Key:        key,
+		StatusCode: statusCode,
+	})
 }
 
 func cacheHeader(header http.Header, statusCode int) http.Header {
@@ -467,6 +519,18 @@ func ClientWithVaryHeaders(headers []string) ClientOption {
 func ClientWithExpiresHeader() ClientOption {
 	return func(c *Client) error {
 		c.writeExpiresHeader = true
+		return nil
+	}
+}
+
+// ClientWithObserver sets a function that receives cache middleware events.
+// Optional setting.
+func ClientWithObserver(observer Observer) ClientOption {
+	return func(c *Client) error {
+		if observer == nil {
+			return errors.New("cache client observer is not set")
+		}
+		c.observer = observer
 		return nil
 	}
 }
