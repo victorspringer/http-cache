@@ -211,24 +211,9 @@ func TestEvict(t *testing.T) {
 	for _, tt := range tests {
 		count++
 
-		r1 := cache.Response{
-			Value:      []byte("value 1"),
-			Expiration: time.Now().Add(1 * time.Minute),
-			LastAccess: time.Now().Add(-1 * time.Minute),
-			Frequency:  2,
-		}.Bytes()
-		r2 := cache.Response{
-			Value:      []byte("value 2"),
-			Expiration: time.Now().Add(1 * time.Minute),
-			LastAccess: time.Now().Add(-2 * time.Minute),
-			Frequency:  1,
-		}.Bytes()
-		r3 := cache.Response{
-			Value:      []byte("value 3"),
-			Expiration: time.Now().Add(1 * time.Minute),
-			LastAccess: time.Now().Add(-3 * time.Minute),
-			Frequency:  3,
-		}.Bytes()
+		r1 := cache.Response{Value: []byte("value 1"), Expiration: time.Now().Add(1 * time.Minute)}.Bytes()
+		r2 := cache.Response{Value: []byte("value 2"), Expiration: time.Now().Add(1 * time.Minute)}.Bytes()
+		r3 := cache.Response{Value: []byte("value 3"), Expiration: time.Now().Add(1 * time.Minute)}.Bytes()
 		a := &Adapter{
 			mutex:     sync.RWMutex{},
 			capacity:  2,
@@ -239,9 +224,9 @@ func TestEvict(t *testing.T) {
 				14974840993097796199: r3,
 			},
 			meta: map[uint64]*entry{
-				14974843192121052621: newEntryFromResponse(r1, len(r1)),
-				14974839893586167988: newEntryFromResponse(r2, len(r2)),
-				14974840993097796199: newEntryFromResponse(r3, len(r3)),
+				14974843192121052621: {lastAccessNano: time.Now().Add(-1 * time.Minute).UnixNano(), frequency: 2, size: len(r1)},
+				14974839893586167988: {lastAccessNano: time.Now().Add(-2 * time.Minute).UnixNano(), frequency: 1, size: len(r2)},
+				14974840993097796199: {lastAccessNano: time.Now().Add(-3 * time.Minute).UnixNano(), frequency: 3, size: len(r3)},
 			},
 		}
 		t.Run(tt.name, func(t *testing.T) {

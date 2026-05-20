@@ -121,7 +121,7 @@ func (a *Adapter) Set(key uint64, response []byte, expiration time.Time) {
 	}
 
 	a.store[key] = response
-	a.meta[key] = newEntryFromResponse(response, len(response))
+	a.meta[key] = newEntry(len(response))
 	a.storage.add(len(response))
 }
 
@@ -154,24 +154,19 @@ func (a *Adapter) Release(key uint64) {
 	a.storage.del(len(b))
 }
 
-// newEntryFromResponse seeds an entry from the encoded Response's
-// metadata when possible. This keeps eviction semantics compatible with
-// callers that pre-populated the store with hand-built Response blobs.
-func newEntryFromResponse(blob []byte, size int) *entry {
-	e := &entry{
+// newEntry seeds a fresh metadata entry. Set always starts an entry
+// with LastAccess=now and Frequency=1; Touch increments thereafter.
+// Previous versions would gob-decode the blob to read an embedded
+// LastAccess/Frequency in case the caller hand-built a Response with
+// historical values, but that cost a gob.Decoder allocation per Set
+// for negligible benefit (the middleware itself never relies on it
+// because AdapterTouch supersedes the in-blob counters).
+func newEntry(size int) *entry {
+	return &entry{
 		lastAccessNano: time.Now().UnixNano(),
 		frequency:      1,
 		size:           size,
 	}
-	if r := cache.BytesToResponse(blob); !r.LastAccess.IsZero() || r.Frequency > 0 {
-		if !r.LastAccess.IsZero() {
-			e.lastAccessNano = r.LastAccess.UnixNano()
-		}
-		if r.Frequency > 0 {
-			e.frequency = int64(r.Frequency)
-		}
-	}
-	return e
 }
 
 // evict removes a single entry from the store. It assumes that the caller holds
