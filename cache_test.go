@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -519,6 +520,110 @@ func TestMiddlewareCachesWithoutExpiration(t *testing.T) {
 	}
 	if expiration := BytesToResponse(stored).Expiration; !expiration.IsZero() {
 		t.Fatalf("expiration = %v, want zero time", expiration)
+	}
+}
+
+func TestDropReleasesCachedResponse(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "http://foo.bar/drop?b=2&a=1", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 1"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+
+	dropRequest := httptest.NewRequest(http.MethodGet, "http://foo.bar/drop?a=1&b=2", nil)
+	if err := client.Drop(dropRequest); err != nil {
+		t.Fatal(err)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "http://foo.bar/drop?b=2&a=1", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 2"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestDropReleasesCachedPostResponseAndRestoresBody(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithMethods([]string{http.MethodPost}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter := 0
+	handler := client.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter++
+		w.Write([]byte(fmt.Sprintf("value %d", counter)))
+	}))
+
+	body := []byte(`{"foo":"bar"}`)
+	r := httptest.NewRequest(http.MethodPost, "http://foo.bar/drop-post", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 1"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+
+	dropRequest := httptest.NewRequest(http.MethodPost, "http://foo.bar/drop-post", bytes.NewReader(body))
+	if err := client.Drop(dropRequest); err != nil {
+		t.Fatal(err)
+	}
+	restoredBody, err := io.ReadAll(dropRequest.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restoredBody, body) {
+		t.Fatalf("restored body = %q, want %q", string(restoredBody), string(body))
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "http://foo.bar/drop-post", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if got, want := w.Body.String(), "value 2"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestDropReturnsBodyReadError(t *testing.T) {
+	adapter := &adapterMock{
+		store: map[uint64][]byte{},
+	}
+	client, err := NewClient(
+		ClientWithAdapter(adapter),
+		ClientWithTTL(1*time.Minute),
+		ClientWithMethods([]string{http.MethodPost}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "http://foo.bar/drop-error", errReader(0))
+	if err := client.Drop(r); err == nil {
+		t.Fatal("Drop() error = nil, want error")
 	}
 }
 

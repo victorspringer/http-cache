@@ -97,26 +97,21 @@ type Adapter interface {
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c.cacheableMethod(r.Method) && c.cacheableURIPath(r.URL) {
-			sortURLParams(r.URL)
-			key := generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders)
-			if r.Method == http.MethodPost && r.Body != nil {
-				body, err := io.ReadAll(r.Body)
-				defer r.Body.Close()
-				if err != nil {
-					next.ServeHTTP(w, r)
-					return
-				}
-				reader := io.NopCloser(bytes.NewBuffer(body))
-				key = generateKeyWithBodyAndHeaders(r.URL.String(), body, r.Header, c.varyHeaders)
-				r.Body = reader
+			key, err := c.key(r)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			params := r.URL.Query()
 			if _, ok := params[c.refreshKey]; ok {
 				delete(params, c.refreshKey)
-
 				r.URL.RawQuery = params.Encode()
-				key = generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders)
+				key, err = c.key(r)
+				if err != nil {
+					next.ServeHTTP(w, r)
+					return
+				}
 
 				c.adapter.Release(key)
 			} else {
@@ -171,6 +166,16 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// Drop releases the cache entry matching the given request.
+func (c *Client) Drop(r *http.Request) error {
+	key, err := c.key(r)
+	if err != nil {
+		return err
+	}
+	c.adapter.Release(key)
+	return nil
+}
+
 func (c *Client) cacheableResponse(rw *responseWriter, statusCode int) bool {
 	if !c.statusCodeFilter(statusCode) {
 		return false
@@ -195,6 +200,22 @@ func (c *Client) cacheableURIPath(URL *url.URL) bool {
 		return true
 	}
 	return !c.skipCachePathRegex.MatchString(URL.Path)
+}
+
+func (c *Client) key(r *http.Request) (uint64, error) {
+	sortURLParams(r.URL)
+	if r.Method != http.MethodPost || r.Body == nil {
+		return generateKeyWithHeaders(r.URL.String(), r.Header, c.varyHeaders), nil
+	}
+
+	body, err := io.ReadAll(r.Body)
+	r.Body.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+	return generateKeyWithBodyAndHeaders(r.URL.String(), body, r.Header, c.varyHeaders), nil
 }
 
 func cacheHeader(header http.Header, statusCode int) http.Header {
