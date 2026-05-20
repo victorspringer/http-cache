@@ -317,7 +317,13 @@ func (c *Client) cacheableURIPath(URL *url.URL) bool {
 
 func (c *Client) key(r *http.Request) (uint64, []byte, error) {
 	sortURLParams(r.URL)
-	if r.Method != http.MethodPost || r.Body == nil {
+	// POST keys include the body. PURGE has to mirror that so it can
+	// invalidate a cached POST entry; without this, PURGE would always
+	// compute the body-less key and silently fail to find anything
+	// stored under URL+body.
+	bodyKeyed := r.Body != nil &&
+		(r.Method == http.MethodPost || r.Method == methodPurge)
+	if !bodyKeyed {
 		urlStr := r.URL.String()
 		return generateKeyWithHeaders(urlStr, r.Header, c.varyHeaders),
 			canonicalFingerprint(urlStr, nil, r.Header, c.varyHeaders),
