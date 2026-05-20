@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	goredis "github.com/go-redis/redis"
 	"github.com/victorspringer/http-cache"
 )
 
@@ -155,4 +156,32 @@ func TestExpiration(t *testing.T) {
 			t.Fatalf("memory.Get() = %v, want %v", string(got), "no expiration")
 		}
 	})
+}
+
+func TestNewAdapterWithClient(t *testing.T) {
+	client := goredis.NewClient(&goredis.Options{
+		Addr: ":6379",
+	})
+	defer client.Close()
+
+	adapter := NewAdapterWithClient(client)
+	key := uint64(20)
+	response := cache.Response{
+		Value: []byte("standalone client"),
+	}.Bytes()
+
+	adapter.Set(key, response, time.Now().Add(1*time.Minute))
+	t.Cleanup(func() {
+		adapter.Release(key)
+	})
+
+	b, ok := adapter.Get(key)
+	if !ok {
+		t.Fatal("response was not cached")
+	}
+
+	got := cache.BytesToResponse(b).Value
+	if !reflect.DeepEqual(got, []byte("standalone client")) {
+		t.Fatalf("memory.Get() = %v, want %v", string(got), "standalone client")
+	}
 }

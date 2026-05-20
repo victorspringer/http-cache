@@ -73,16 +73,24 @@ func (a *Adapter) Release(key uint64) {
 // NewAdapter initializes Redis adapter.
 func NewAdapter(opt *RingOptions) cache.Adapter {
 	ropt := redis.RingOptions(*opt)
-	return &Adapter{
-		&redisCache.Codec{
-			Redis: redis.NewRing(&ropt),
-			Marshal: func(v interface{}) ([]byte, error) {
-				return msgpack.Marshal(v)
+	return NewAdapterWithClient(redis.NewRing(&ropt))
+}
 
-			},
-			Unmarshal: func(b []byte, v interface{}) error {
-				return msgpack.Unmarshal(b, v)
-			},
+// NewAdapterWithClient initializes Redis adapter with an existing go-redis client.
+func NewAdapterWithClient(client redis.Cmdable) cache.Adapter {
+	return &Adapter{
+		store: newCodec(client),
+	}
+}
+
+func newCodec(client redis.Cmdable) *redisCache.Codec {
+	return &redisCache.Codec{
+		Redis: client,
+		Marshal: func(v interface{}) ([]byte, error) {
+			return msgpack.Marshal(v)
+		},
+		Unmarshal: func(b []byte, v interface{}) error {
+			return msgpack.Unmarshal(b, v)
 		},
 	}
 }
