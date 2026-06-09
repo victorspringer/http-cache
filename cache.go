@@ -881,12 +881,6 @@ func ClientWithSkipCacheURIPathRegex(pathRegex *regexp.Regexp) ClientOption {
 	}
 }
 
-// ClientWithSkipCacheUriPathRegex exists for compatibility with existing
-// deployments that use the lower-case Uri acronym style.
-func ClientWithSkipCacheUriPathRegex(pathRegex *regexp.Regexp) ClientOption {
-	return ClientWithSkipCacheURIPathRegex(pathRegex)
-}
-
 // ClientWithVaryHeaders includes selected request headers in cache keys.
 func ClientWithVaryHeaders(headers []string) ClientOption {
 	return func(c *Client) error {
