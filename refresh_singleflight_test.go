@@ -18,12 +18,13 @@ func TestClientWithSingleflightJoinsBackgroundRefresh(t *testing.T) {
 		cacheControl string
 		write        bool
 		stored       bool
+		shared       bool
 	}{
-		{name: "cacheable", status: http.StatusCreated, write: true, stored: true},
-		{name: "filtered status", status: http.StatusServiceUnavailable, write: true},
+		{name: "cacheable", status: http.StatusCreated, write: true, stored: true, shared: true},
+		{name: "filtered status", status: http.StatusServiceUnavailable, write: true, shared: true},
 		{name: "no store", status: http.StatusOK, cacheControl: "no-store", write: true},
 		{name: "private", status: http.StatusOK, cacheControl: "private", write: true},
-		{name: "no write", status: http.StatusOK},
+		{name: "no write", status: http.StatusOK, shared: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			const url = "http://x/shared-refresh"
@@ -141,8 +142,12 @@ func TestClientWithSingleflightJoinsBackgroundRefresh(t *testing.T) {
 					t.Fatal("foreground request remained blocked")
 				}
 			}
-			if got := atomic.LoadInt64(&calls); got != 1 {
-				t.Errorf("origin calls = %d, want 1", got)
+			wantCalls := int64(1)
+			if !tt.shared {
+				wantCalls += followers
+			}
+			if got := atomic.LoadInt64(&calls); got != wantCalls {
+				t.Errorf("origin calls = %d, want %d", got, wantCalls)
 			}
 			if _, stored := adapter.Get(key); stored != tt.stored {
 				t.Errorf("response stored = %v, want %v", stored, tt.stored)

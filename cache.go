@@ -295,10 +295,11 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			// call: a background refresh can answer from the cache they
 			// asked to bypass.
 			if c.singleflightEnabled && !refreshed && !reqCC.noCache {
-				payload, _ := c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
+				payload, shared := c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
 					cw := newCaptureWriter(c.maxBodySize)
 					next.ServeHTTP(cw, r)
 					statusCode := cw.statusCodeValue()
+					cw.shareable = c.shareableSnapshot(cw.header, cw.exceeded)
 					if c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
 						now := time.Now()
 						ttl := c.responseTTL(cw.header)
@@ -319,7 +320,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					}
 					return cw
 				})
-				if cw, ok := payload.(*captureWriter); ok && cw != nil {
+				if cw, ok := payload.(*captureWriter); ok && cw != nil && (!shared || cw.shareable) {
 					writeCapturedResponse(w, cw)
 				} else {
 					c.serveAndStore(w, r, next, key, fingerprint)
@@ -391,6 +392,7 @@ func (c *Client) refresh(r *http.Request, next http.Handler, key uint64, fingerp
 		if b, ok := c.adapter.Get(key); ok {
 			if resp, err := decodeResponse(b); err == nil && resp.Valid() && canonicalKeyMatches(resp.CanonicalKey, fingerprint) {
 				cw := newCaptureWriter(0)
+				cw.shareable = true
 				cw.header = cloneHeader(resp.Header)
 				if c.writeExpiresHeader && !resp.Expiration.IsZero() {
 					cw.header.Set("Expires", resp.Expiration.UTC().Format(http.TimeFormat))
@@ -403,6 +405,7 @@ func (c *Client) refresh(r *http.Request, next http.Handler, key uint64, fingerp
 		cw := newCaptureWriter(c.maxBodySize)
 		next.ServeHTTP(cw, r)
 		statusCode := cw.statusCodeValue()
+		cw.shareable = c.shareableSnapshot(cw.header, cw.exceeded)
 		if !c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
 			return cw
 		}
@@ -472,10 +475,20 @@ func (c *Client) cacheableSnapshot(header http.Header, wrote, exceeded bool, sta
 		// served back to every subsequent request.
 		return false
 	}
-	if exceeded {
+	if !c.statusCodeFilter(statusCode) {
 		return false
 	}
-	if !c.statusCodeFilter(statusCode) {
+	return c.shareableSnapshot(header, exceeded)
+}
+
+// shareableSnapshot reports whether a singleflight leader's response may
+// be handed to the followers coalesced on the same key. Unlike
+// cacheableSnapshot it ignores the status filter and empty responses, so
+// a stampede against a failing origin still collapses into one call. It
+// refuses responses the application marked as uncacheable, which may be
+// specific to the leader's client, and responses too large to buffer.
+func (c *Client) shareableSnapshot(header http.Header, exceeded bool) bool {
+	if exceeded {
 		return false
 	}
 	if c.respectCacheControl {
@@ -956,9 +969,14 @@ func ClientWithPurge() ClientOption {
 }
 
 // ClientWithSingleflight coalesces concurrent cache misses for the same
-// key so the origin handler runs only once per cache-miss batch. All
-// concurrent callers receive the same response. Defaults off so callers
-// who depend on per-request handler invocations are not surprised.
+// key so the origin handler runs only once per cache-miss batch, also when
+// it fails. Waiting callers receive the leader's response unless it must
+// not reach another client: responses marked private, no-store or no-cache
+// (with ClientWithRespectCacheControl), responses carrying the
+// ClientWithSkipCacheResponseHeader header, and responses larger than
+// ClientWithMaxBodySize. In those cases each waiting caller runs its own
+// request. Defaults off so callers who depend on per-request handler
+// invocations are not surprised.
 //
 // Requests containing the configured refresh query parameter bypass
 // singleflight. Requests with Cache-Control: no-cache also bypass it when
@@ -1093,7 +1111,7 @@ func (w *responseWriter) statusCodeValue() int {
 
 // writeCapturedResponse copies a captureWriter's recorded response to a
 // real http.ResponseWriter. Used to deliver a singleflight leader's
-// captured response to every follower (and to the leader itself).
+// captured response to the leader and eligible followers.
 func writeCapturedResponse(w http.ResponseWriter, cw *captureWriter) {
 	dst := w.Header()
 	for k, vs := range cw.header {
@@ -1120,6 +1138,9 @@ type captureWriter struct {
 	wrote       bool
 	maxBodySize int
 	exceeded    bool
+	// shareable reports whether singleflight followers may reuse this
+	// response; see Client.shareableSnapshot.
+	shareable bool
 }
 
 func newCaptureWriter(maxBodySize int) *captureWriter {

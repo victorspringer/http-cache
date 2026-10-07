@@ -141,7 +141,7 @@ Available event types are `hit`, `miss`, `stale`, `refresh`, `store` and `purge`
 - `ClientWithMaxBodySize(n)` caps the response body bytes the middleware will buffer and cache. Responses larger than `n` are still streamed to the client untouched, but their buffered copy is dropped and the entry is not stored. Recommended for any endpoint that can emit large payloads (downloads, streaming responses).
 
 ### Cache stampede protection
-`ClientWithSingleflight` coalesces concurrent misses for the same cache key so the origin handler runs only once per stampede. All concurrent callers receive the same response. Disabled by default - opt in if your origin is expensive enough that an N-way concurrent miss is a real concern.
+`ClientWithSingleflight` coalesces concurrent misses for the same cache key so the origin handler runs only once per stampede, also when it is failing. Waiting callers receive the leader's response unless it must not reach another client: responses marked `private`, `no-store` or `no-cache` (with `ClientWithRespectCacheControl`), responses carrying the `ClientWithSkipCacheResponseHeader` header, and responses larger than `ClientWithMaxBodySize`. In those cases each waiting caller runs its own request. Disabled by default - opt in if your origin is expensive enough that an N-way concurrent miss is a real concern.
 
 Requests containing the query parameter configured by `ClientWithRefreshKey` bypass singleflight. Requests with `Cache-Control: no-cache` also bypass it when `ClientWithRespectCacheControl` is enabled. These requests run the origin handler independently and can still store cacheable responses.
 
