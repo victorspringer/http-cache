@@ -99,9 +99,9 @@ func TestMiddlewareRespectsResponsePrivate(t *testing.T) {
 // s-maxage takes precedence for shared caches.
 func TestMiddlewareRespectsResponseMaxAge(t *testing.T) {
 	tests := []struct {
-		name      string
-		header    string
-		wantSecs  int
+		name     string
+		header   string
+		wantSecs int
 	}{
 		{"max-age sets TTL", "max-age=42", 42},
 		{"s-maxage wins for shared caches", "max-age=10, s-maxage=99", 99},
