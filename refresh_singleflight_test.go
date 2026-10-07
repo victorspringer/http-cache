@@ -106,10 +106,11 @@ func TestClientWithSingleflightJoinsBackgroundRefresh(t *testing.T) {
 					t.Fatal("foreground request did not reach the miss path")
 				}
 			}
+			waitForSingleflightDups(t, &client.sf, key, followers)
 			select {
 			case <-results:
 				t.Fatal("foreground request returned before the refresh")
-			case <-time.After(20 * time.Millisecond):
+			default:
 			}
 			unblock()
 
@@ -152,18 +153,19 @@ func TestClientWithSingleflightJoinsBackgroundRefresh(t *testing.T) {
 
 type refreshLookupAdapter struct {
 	slowAdapter
-	lookups int64
-	started chan struct{}
-	release chan struct{}
+	blockNextGet bool
+	started      chan struct{}
+	release      chan struct{}
 }
 
 func (a *refreshLookupAdapter) Get(key uint64) ([]byte, bool) {
-	switch atomic.AddInt64(&a.lookups, 1) {
-	case 1:
+	a.mu.Lock()
+	block := a.blockNextGet
+	a.blockNextGet = false
+	a.mu.Unlock()
+	if block {
 		close(a.started)
 		<-a.release
-	case 2:
-		return nil, false
 	}
 	return a.slowAdapter.Get(key)
 }
@@ -173,9 +175,10 @@ func TestClientWithSingleflightJoinsRefreshCacheLookup(t *testing.T) {
 		t.Run(fmt.Sprintf("matching=%v", matching), func(t *testing.T) {
 			const url = "http://x/refreshed-lookup"
 			adapter := &refreshLookupAdapter{
-				slowAdapter: slowAdapter{store: map[uint64][]byte{}},
-				started:     make(chan struct{}),
-				release:     make(chan struct{}),
+				slowAdapter:  slowAdapter{store: map[uint64][]byte{}},
+				blockNextGet: true,
+				started:      make(chan struct{}),
+				release:      make(chan struct{}),
 			}
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(adapter.release) }) }
@@ -206,14 +209,6 @@ func TestClientWithSingleflightJoinsRefreshCacheLookup(t *testing.T) {
 				storedFingerprint = []byte("different request")
 			}
 			expires := time.Now().Add(time.Minute).Truncate(time.Second)
-			adapter.Set(key, Response{
-				Value: []byte("cached response"),
-				Header: cacheHeader(http.Header{
-					"X-Values": []string{"one", "two"},
-				}, http.StatusCreated),
-				Expiration:   expires,
-				CanonicalKey: storedFingerprint,
-			}.Bytes(), expires)
 			var calls int64
 			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				atomic.AddInt64(&calls, 1)
@@ -236,11 +231,20 @@ func TestClientWithSingleflightJoinsRefreshCacheLookup(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("foreground request did not reach the miss path")
 			}
+			waitForSingleflightDups(t, &client.sf, key, 1)
 			select {
 			case <-done:
 				t.Fatal("foreground request returned before the refresh lookup")
-			case <-time.After(20 * time.Millisecond):
+			default:
 			}
+			adapter.Set(key, Response{
+				Value: []byte("cached response"),
+				Header: cacheHeader(http.Header{
+					"X-Values": []string{"one", "two"},
+				}, http.StatusCreated),
+				Expiration:   expires,
+				CanonicalKey: storedFingerprint,
+			}.Bytes(), expires)
 			unblock()
 			select {
 			case failure := <-done:

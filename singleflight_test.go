@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,28 @@ func (a *slowAdapter) Release(key uint64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.store, key)
+}
+
+func waitForSingleflightDups(t *testing.T, g *singleflightGroup, key uint64, want int) {
+	t.Helper()
+	callKey := KeyAsString(key)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		g.mu.Lock()
+		call := g.m[callKey]
+		dups := 0
+		if call != nil {
+			dups = call.dups
+		}
+		g.mu.Unlock()
+		if call != nil && dups >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("singleflight key %q has %d duplicates, want at least %d", callKey, dups, want)
+		}
+		runtime.Gosched()
+	}
 }
 
 // With ClientWithSingleflight, a stampede of identical concurrent

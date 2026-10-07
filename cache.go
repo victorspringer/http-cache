@@ -1137,6 +1137,10 @@ type singleflightGroup struct {
 type sfCall struct {
 	done chan struct{}
 	val  interface{}
+	// dups counts callers that joined this call. Guarded by
+	// singleflightGroup.mu; tests read it to know every follower is
+	// blocked on done before releasing the leader.
+	dups int
 }
 
 func (g *singleflightGroup) Do(key string, fn func() interface{}) (interface{}, bool) {
@@ -1145,6 +1149,7 @@ func (g *singleflightGroup) Do(key string, fn func() interface{}) (interface{}, 
 		g.m = make(map[string]*sfCall)
 	}
 	if call, ok := g.m[key]; ok {
+		call.dups++
 		g.mu.Unlock()
 		<-call.done
 		return call.val, true
