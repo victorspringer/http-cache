@@ -360,15 +360,22 @@ func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64,
 	cloned := r.Clone(context.Background())
 	go c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
 		if b, ok := c.adapter.Get(key); ok {
-			if resp, err := decodeResponse(b); err == nil && resp.Valid() {
-				return nil
+			if resp, err := decodeResponse(b); err == nil && resp.Valid() && canonicalKeyMatches(resp.CanonicalKey, fingerprint) {
+				cw := newCaptureWriter(0)
+				cw.header = cloneHeader(resp.Header)
+				if c.writeExpiresHeader && !resp.Expiration.IsZero() {
+					cw.header.Set("Expires", resp.Expiration.UTC().Format(http.TimeFormat))
+				}
+				cw.WriteHeader(cachedStatusCode(resp.Header))
+				cw.Write(resp.Value)
+				return cw
 			}
 		}
 		cw := newCaptureWriter(c.maxBodySize)
 		next.ServeHTTP(cw, cloned)
 		statusCode := cw.statusCodeValue()
 		if !c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
-			return nil
+			return cw
 		}
 		now := time.Now()
 		ttl := c.responseTTL(cw.header)
@@ -386,7 +393,7 @@ func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64,
 		}
 		c.adapter.Set(key, response.Bytes(), response.Expiration)
 		c.observe(CacheEventStore, cloned, key, statusCode)
-		return nil
+		return cw
 	})
 }
 
