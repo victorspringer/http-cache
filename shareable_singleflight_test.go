@@ -212,8 +212,8 @@ func TestClientWithSingleflightDoesNotShareOversizedResponses(t *testing.T) {
 					if out.response.Code != http.StatusCreated || out.response.Header().Get("X-User") != out.user {
 						t.Errorf("response for %q = %d %v", out.user, out.response.Code, out.response.Header())
 					}
-					if out.user != "leader" && out.response.Body.String() != "oversized response for "+out.user {
-						t.Errorf("follower %q body = %q", out.user, out.response.Body.String())
+					if out.response.Body.String() != "oversized response for "+out.user {
+						t.Errorf("response body for %q = %q", out.user, out.response.Body.String())
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("request remained blocked after oversized response")

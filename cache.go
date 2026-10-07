@@ -297,6 +297,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 			if c.singleflightEnabled && !refreshed && !reqCC.noCache {
 				payload, shared := c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
 					cw := newCaptureWriter(c.maxBodySize)
+					cw.spill = w
 					next.ServeHTTP(cw, r)
 					statusCode := cw.statusCodeValue()
 					cw.shareable = c.shareableSnapshot(cw.header, cw.exceeded)
@@ -321,7 +322,11 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					return cw
 				})
 				if cw, ok := payload.(*captureWriter); ok && cw != nil && (!shared || cw.shareable) {
-					writeCapturedResponse(w, cw)
+					// A leader whose response outgrew the buffer already
+					// streamed it to w through spill.
+					if !cw.exceeded || cw.spill == nil {
+						writeCapturedResponse(w, cw)
+					}
 				} else {
 					c.serveAndStore(w, r, next, key, fingerprint)
 				}
@@ -1128,10 +1133,11 @@ func writeCapturedResponse(w http.ResponseWriter, cw *captureWriter) {
 	}
 }
 
-// captureWriter records a handler's response without forwarding it to a
-// real http.ResponseWriter, so a single execution can be shared across
-// the goroutines that coalesce on the same singleflight key.
+// captureWriter buffers a handler's response for singleflight. Foreground
+// leaders stream oversized responses to spill; background refreshes
+// discard oversized bodies.
 type captureWriter struct {
+	spill       http.ResponseWriter
 	header      http.Header
 	body        bytes.Buffer
 	statusCode  int
@@ -1165,15 +1171,28 @@ func (w *captureWriter) Write(b []byte) (int, error) {
 		w.statusCode = http.StatusOK
 		w.wrote = true
 	}
-	if !w.exceeded {
-		if w.maxBodySize > 0 && w.body.Len()+len(b) > w.maxBodySize {
-			w.exceeded = true
-			w.body.Reset()
-		} else {
-			w.body.Write(b)
+	if w.exceeded {
+		if w.spill != nil {
+			return w.spill.Write(b)
 		}
+		return len(b), nil
 	}
-	return len(b), nil
+	if w.maxBodySize > 0 && w.body.Len()+len(b) > w.maxBodySize {
+		w.exceeded = true
+		if w.spill != nil {
+			writeHeader(w.spill.Header(), w.header)
+			w.spill.WriteHeader(w.statusCodeValue())
+			_, err := w.body.WriteTo(w.spill)
+			w.body = bytes.Buffer{}
+			if err != nil {
+				return 0, err
+			}
+			return w.spill.Write(b)
+		}
+		w.body = bytes.Buffer{}
+		return len(b), nil
+	}
+	return w.body.Write(b)
 }
 
 func (w *captureWriter) statusCodeValue() int {
