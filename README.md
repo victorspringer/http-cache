@@ -164,6 +164,8 @@ Unknown directives are intentionally ignored, so any extension your application 
 ### Stale-while-revalidate
 `ClientWithStaleWhileRevalidate(window)` implements [RFC 5861](https://www.rfc-editor.org/rfc/rfc5861) stale-while-revalidate. An expired entry whose age is no greater than `window` is served from cache immediately while a single background goroutine refreshes it. Concurrent stale hits coalesce to one origin call. The refresh outlives the triggering request, so a client disconnect does not abort the refill.
 
+Handler panics during a background refresh are recovered and logged with a stack trace. As in `net/http`, `http.ErrAbortHandler` is recovered without logging.
+
 ```go
 cacheClient, err := cache.NewClient(
     cache.ClientWithAdapter(memcached),

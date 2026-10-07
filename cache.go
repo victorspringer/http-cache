@@ -34,9 +34,11 @@ import (
 	"hash"
 	"hash/fnv"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -314,40 +316,49 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 					}
 					return cw
 				})
-				cw := payload.(*captureWriter)
-				writeCapturedResponse(w, cw)
+				if cw, ok := payload.(*captureWriter); ok && cw != nil {
+					writeCapturedResponse(w, cw)
+				} else {
+					c.serveAndStore(w, r, next, key, fingerprint)
+				}
 				return
 			}
 
-			rw := newResponseWriter(w, c.maxBodySize)
-			next.ServeHTTP(rw, r)
-
-			statusCode := rw.statusCodeValue()
-			value := rw.body.Bytes()
-			now := time.Now()
-			ttl := c.responseTTL(rw.Header())
-			expires := time.Time{}
-			if ttl > 0 {
-				expires = now.Add(ttl)
-			}
-			if c.cacheableResponse(rw, statusCode) {
-				response := Response{
-					Value:        value,
-					Header:       cacheHeader(rw.Header(), statusCode),
-					Expiration:   expires,
-					LastAccess:   now,
-					Frequency:    1,
-					CanonicalKey: fingerprint,
-				}
-				c.adapter.Set(key, response.Bytes(), response.Expiration)
-				c.observe(CacheEventStore, r, key, statusCode)
-			}
-
+			c.serveAndStore(w, r, next, key, fingerprint)
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// serveAndStore runs next against w directly, streaming the response to
+// the client while buffering a copy, and stores that copy when it is
+// cacheable. It is the path for requests that are not coalesced.
+func (c *Client) serveAndStore(w http.ResponseWriter, r *http.Request, next http.Handler, key uint64, fingerprint []byte) {
+	rw := newResponseWriter(w, c.maxBodySize)
+	next.ServeHTTP(rw, r)
+
+	statusCode := rw.statusCodeValue()
+	value := rw.body.Bytes()
+	now := time.Now()
+	ttl := c.responseTTL(rw.Header())
+	expires := time.Time{}
+	if ttl > 0 {
+		expires = now.Add(ttl)
+	}
+	if c.cacheableResponse(rw, statusCode) {
+		response := Response{
+			Value:        value,
+			Header:       cacheHeader(rw.Header(), statusCode),
+			Expiration:   expires,
+			LastAccess:   now,
+			Frequency:    1,
+			CanonicalKey: fingerprint,
+		}
+		c.adapter.Set(key, response.Bytes(), response.Expiration)
+		c.observe(CacheEventStore, r, key, statusCode)
+	}
 }
 
 // scheduleRefresh kicks off a background revalidation of a stale entry.
@@ -358,7 +369,22 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 // triggering request does not abort the refill.
 func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64, fingerprint []byte) {
 	cloned := r.Clone(context.Background())
-	go c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
+	go c.refresh(cloned, next, key, fingerprint)
+}
+
+// refresh runs one background revalidation. Its singleflight closure must
+// return a *captureWriter on every path because foreground misses with
+// ClientWithSingleflight can join the same call; a nil result (the
+// handler panicked) makes each follower serve its own request. Handler
+// panics are recovered here, since nothing above this goroutine would,
+// and logged with a stack trace except for http.ErrAbortHandler.
+func (c *Client) refresh(r *http.Request, next http.Handler, key uint64, fingerprint []byte) {
+	defer func() {
+		if v := recover(); v != nil && v != http.ErrAbortHandler {
+			log.Printf("http-cache: panic in background refresh: %v\n%s", v, debug.Stack())
+		}
+	}()
+	c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
 		if b, ok := c.adapter.Get(key); ok {
 			if resp, err := decodeResponse(b); err == nil && resp.Valid() && canonicalKeyMatches(resp.CanonicalKey, fingerprint) {
 				cw := newCaptureWriter(0)
@@ -372,7 +398,7 @@ func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64,
 			}
 		}
 		cw := newCaptureWriter(c.maxBodySize)
-		next.ServeHTTP(cw, cloned)
+		next.ServeHTTP(cw, r)
 		statusCode := cw.statusCodeValue()
 		if !c.cacheableSnapshot(cw.header, cw.wrote, cw.exceeded, statusCode) {
 			return cw
@@ -392,7 +418,7 @@ func (c *Client) scheduleRefresh(r *http.Request, next http.Handler, key uint64,
 			CanonicalKey: fingerprint,
 		}
 		c.adapter.Set(key, response.Bytes(), response.Expiration)
-		c.observe(CacheEventStore, cloned, key, statusCode)
+		c.observe(CacheEventStore, r, key, statusCode)
 		return cw
 	})
 }
@@ -944,6 +970,9 @@ func ClientWithSingleflight() ClientOption {
 // one refresh runs per key at a time. Defaults to 0 (off), in which
 // case expired entries continue to fall through to the existing
 // release-and-miss path.
+//
+// Panics in the background handler are recovered and logged with a stack
+// trace; http.ErrAbortHandler is recovered without logging.
 func ClientWithStaleWhileRevalidate(window time.Duration) ClientOption {
 	return func(c *Client) error {
 		if window < 0 {
@@ -1158,12 +1187,13 @@ func (g *singleflightGroup) Do(key string, fn func() interface{}) (interface{}, 
 	g.m[key] = call
 	g.mu.Unlock()
 
+	defer func() {
+		g.mu.Lock()
+		close(call.done)
+		delete(g.m, key)
+		g.mu.Unlock()
+	}()
+
 	call.val = fn()
-	close(call.done)
-
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
-
 	return call.val, false
 }
