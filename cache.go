@@ -291,7 +291,10 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 				}
 			}
 
-			if c.singleflightEnabled {
+			// Requests that skipped the lookup must not join an in-flight
+			// call: a background refresh can answer from the cache they
+			// asked to bypass.
+			if c.singleflightEnabled && !refreshed && !reqCC.noCache {
 				payload, _ := c.sf.Do(strconv.FormatUint(key, 36), func() interface{} {
 					cw := newCaptureWriter(c.maxBodySize)
 					next.ServeHTTP(cw, r)
@@ -956,6 +959,11 @@ func ClientWithPurge() ClientOption {
 // key so the origin handler runs only once per cache-miss batch. All
 // concurrent callers receive the same response. Defaults off so callers
 // who depend on per-request handler invocations are not surprised.
+//
+// Requests containing the configured refresh query parameter bypass
+// singleflight. Requests with Cache-Control: no-cache also bypass it when
+// ClientWithRespectCacheControl is enabled. These requests run the origin
+// handler independently and can still store cacheable responses.
 func ClientWithSingleflight() ClientOption {
 	return func(c *Client) error {
 		c.singleflightEnabled = true
